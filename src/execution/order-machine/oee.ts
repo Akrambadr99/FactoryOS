@@ -1,0 +1,2 @@
+export interface ProjectionEvent{id:string;at:number;delta:number}
+export function oeeCalculation(opening:number,events:readonly ProjectionEvent[],through:number){if(!Number.isFinite(opening)||!Number.isFinite(through))throw new Error('Invalid OEE calculation projection.');return events.filter(event=>event.at<=through).toSorted((a,b)=>a.at-b.at||a.id.localeCompare(b.id)).reduce((value,event)=>value+event.delta,opening)}
