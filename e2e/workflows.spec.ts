@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 import{expect,test}from'@playwright/test';
 test.beforeEach(async({page})=>{await page.addInitScript({content:'window.localStorage.clear()'})});
 test('opens the command center',async({page})=>{await page.goto('/');await expect(page.getByRole('heading',{name:"FactoryOS command center"})).toBeVisible()});
