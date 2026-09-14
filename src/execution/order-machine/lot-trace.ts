@@ -1,0 +1,2 @@
+export interface Versioned<T>{version:number;effectiveFrom:string;value:T}
+export function lotAtRevision<T>(history:readonly Versioned<T>[],at:string):Versioned<T>|undefined{if(!/^\d{4}-\d{2}-\d{2}$/.test(at))throw new Error('Invalid Batch and lot traceability effective date.');return history.filter(item=>item.effectiveFrom<=at).toSorted((a,b)=>b.effectiveFrom.localeCompare(a.effectiveFrom)||b.version-a.version)[0]}
