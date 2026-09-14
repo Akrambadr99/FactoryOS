@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 import{expect,test}from'@playwright/test';
-test.beforeEach(async({page})=>{await page.addInitScript(()=>localStorage.clear())});
+test.beforeEach(async({page})=>{await page.addInitScript({content:'window.localStorage.clear()'})});
 test('opens the command center',async({page})=>{await page.goto('/');await expect(page.getByRole('heading',{name:"FactoryOS command center"})).toBeVisible()});
 test('navigates to the connected operations workspace',async({page})=>{await page.goto('/');await page.getByRole('link',{name:'Operations'}).click();await expect(page.getByText(/LIVE WORKSPACE/)).toBeVisible()});
 test('renders derived analytics',async({page})=>{await page.goto('/analytics');await expect(page.getByRole('heading',{name:'Operational analytics'})).toBeVisible()});
