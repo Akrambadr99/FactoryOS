@@ -16,3 +16,6 @@ test('retains keyboard-visible product navigation',async({page})=>{await page.go
 test('Order execution deep workflow',async({page})=>{await page.goto('/execution/orders/PO-8842');await expect(page.getByRole('heading',{name:'Production order execution state machine',exact:true})).toBeVisible();await expect(page.getByText('Order PO-8842',{exact:false}).first()).toBeVisible()});
 test('Order execution evidence 1',async({page})=>{await page.goto('/execution/orders/PO-8842');await expect(page.getByText('Machine M-17',{exact:false}).first()).toBeVisible()});
 test('Order execution evidence 2',async({page})=>{await page.goto('/execution/orders/PO-8842');await expect(page.getByText('Material hold',{exact:false}).first()).toBeVisible()});
+
+
+test('Recovery console restores and recovers domain state',async({page})=>{await page.goto('/execution/orders/PO-8842/recovery?shift=B&focus=OP-30');await expect(page.getByRole('heading',{name:"Production recovery console",exact:true})).toBeVisible();await page.getByLabel('Authority').selectOption("quality approver");await page.getByRole('button',{name:'Run domain bulk action'}).click();await expect(page.getByRole('status')).toContainText('1 succeeded; 1 require recovery');await expect(page.getByRole('button',{name:'Retry failed records'})).toBeVisible()});
