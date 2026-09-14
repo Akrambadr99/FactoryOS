@@ -19,3 +19,6 @@ test('Order execution evidence 2',async({page})=>{await page.goto('/execution/or
 
 
 test('Recovery console restores and recovers domain state',async({page})=>{await page.goto('/execution/orders/PO-8842/recovery?shift=B&focus=OP-30');await expect(page.getByRole('heading',{name:"Production recovery console",exact:true})).toBeVisible();await page.getByLabel('Authority').selectOption("quality approver");await page.getByRole('button',{name:'Run domain bulk action'}).click();await expect(page.getByRole('status')).toContainText('1 succeeded; 1 require recovery');await expect(page.getByRole('button',{name:'Retry failed records'})).toBeVisible()});
+
+
+test('Lot genealogy restores a feasible decision',async({page})=>{await page.goto('/execution/lots/LOT-91/genealogy?depth=3');await expect(page.getByRole('heading',{name:"Lot genealogy and recall explorer",exact:true})).toBeVisible();await expect(page.getByRole('region',{name:'Scenario result'})).toContainText(/Feasible|Blocked/);await expect(page.getByText("material parents",{exact:false}).first()).toBeVisible()});
