@@ -1,0 +1,6 @@
+import { useAppServices } from '../../application/useAppServices';
+import { PageTitle } from '../../components/PageTitle';
+import { ProgressMeter } from '../../components/ProgressMeter';
+import { StatGrid } from '../../components/StatGrid';
+import { SuiteCard } from '../../components/SuiteCard';
+export function AnalyticsPage() { const { product, repository } = useAppServices(), snapshot = repository.read(), total = Math.max(1, snapshot.entities.length); return <main className="suite-page"><PageTitle eyebrow="DERIVED READ MODEL" title="Operational analytics" detail="Metrics are computed from the current validated record graph."/><StatGrid items={product.metrics(snapshot.entities)}/><div className="suite-grid">{product.kinds.map(kind => { const records = snapshot.entities.filter(row => row.kind === kind.key), changed = records.filter(row => row.revision > 1).length; return <SuiteCard key={kind.key} title={kind.label} detail={String(records.length) + ' connected records'}><ProgressMeter label="Share of workspace" value={Math.round(records.length / total * 100)}/><ProgressMeter label="Revised records" value={records.length ? Math.round(changed / records.length * 100) : 0}/></SuiteCard>; })}</div></main>; }

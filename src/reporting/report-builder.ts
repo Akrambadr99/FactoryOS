@@ -1,0 +1,3 @@
+import type { Entity } from '../workspace/types';
+import type { Report } from './types';
+export function entityReport(title: string, entities: readonly Entity[], generatedAt: string): Report<Entity> { const statuses = new Set(entities.map(entity => entity.status)); return { title, generatedAt, columns: [{ key: 'title', label: 'Title', value: row => row.title }, { key: 'kind', label: 'Type', value: row => row.kind }, { key: 'status', label: 'Status', value: row => row.status }, { key: 'revision', label: 'Revision', value: row => row.revision }], rows: entities, summary: { records: entities.length, statuses: statuses.size } }; }

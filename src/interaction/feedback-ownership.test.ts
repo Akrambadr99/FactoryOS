@@ -1,0 +1,3 @@
+import { describe, expect, it } from 'vitest';
+import { feedbackFor, finishFeedback, startFeedback } from './feedback-ownership';
+describe('feedback ownership', () => { it('retains the originating entity after navigation', () => { const pending = startFeedback([], 'request-1', 'entity-a'), done = finishFeedback(pending, 'request-1', { value: 'saved' }); expect(feedbackFor(done, 'entity-a')[0]?.status).toBe('success'); expect(feedbackFor(done, 'entity-b')).toEqual([]); }); it('records a scoped failure', () => expect(finishFeedback(startFeedback([], 'r', 'a'), 'r', { message: 'Conflict' })[0]?.message).toBe('Conflict')); });

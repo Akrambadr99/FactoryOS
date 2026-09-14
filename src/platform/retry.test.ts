@@ -1,0 +1,3 @@
+import { describe, expect, it, vi } from 'vitest';
+import { retryDelay, withRetry } from './retry';
+describe('retry', () => { it('caps exponential delay', () => expect(retryDelay(8, { attempts: 9, baseDelayMs: 100, maximumDelayMs: 500 })).toBe(500)); it('returns after a transient failure', async () => { const operation = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('ok'), wait = vi.fn().mockResolvedValue(undefined); await expect(withRetry(operation, { attempts: 2, baseDelayMs: 1, maximumDelayMs: 1 }, wait)).resolves.toBe('ok'); expect(wait).toHaveBeenCalledOnce(); }); });

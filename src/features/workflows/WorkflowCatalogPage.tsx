@@ -1,0 +1,5 @@
+import { useAppServices } from '../../application/useAppServices';
+import { PageTitle } from '../../components/PageTitle';
+import { StatePill } from '../../components/StatePill';
+import { SuiteCard } from '../../components/SuiteCard';
+export function WorkflowCatalogPage() { const { product } = useAppServices(); return <main className="suite-page"><PageTitle eyebrow="COMMAND POLICIES" title="Workflow catalog" detail="Role, source-state and input requirements for every domain transition."/><div className="suite-grid">{product.operations.map(operation => <SuiteCard key={operation.key + '-' + operation.kind} title={operation.label} detail={product.kinds.find(kind => kind.key === operation.kind)?.label ?? ''}><p><b>Roles:</b> {operation.roles.join(', ')}</p><p><b>From:</b> {operation.from.map(state => <StatePill key={state} value={state}/>)}</p><p><b>Inputs:</b> {operation.fields?.length ? operation.fields.map(field => field.label).join(', ') : 'No additional input'}</p></SuiteCard>)}</div></main>; }

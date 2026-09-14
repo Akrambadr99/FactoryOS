@@ -1,0 +1,4 @@
+export interface InboxItem { id: string; createdAt: string; priority: 'low' | 'normal' | 'high'; readAt?: string; snoozedUntil?: string }
+export function visibleInbox<T extends InboxItem>(items: readonly T[], now: string): T[] { return items.filter(item => !item.snoozedUntil || item.snoozedUntil <= now).toSorted((left, right) => { const rank = { high: 2, normal: 1, low: 0 }; return rank[right.priority] - rank[left.priority] || right.createdAt.localeCompare(left.createdAt) }) }
+export function unreadCount(items: readonly InboxItem[], now: string): number { return visibleInbox(items, now).filter(item => !item.readAt).length }
+export function snoozeItem<T extends InboxItem>(items: readonly T[], id: string, until: string): T[] { return items.map(item => item.id === id ? { ...item, snoozedUntil: until } : item) }

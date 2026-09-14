@@ -1,0 +1,1 @@
+export function ArchitectureDiagram() { return <div className="architecture-diagram"><span>React routes</span><i>→</i><span>Application services</span><i>→</i><span>Command engine</span><i>→</i><span>Validated repository</span></div>; }

@@ -1,0 +1,3 @@
+import { describe, expect, it } from 'vitest';
+import { emptyFilter, hasActiveFilter, reduceFilter } from './filter-state';
+describe('workspace filters', () => { it('resets incompatible statuses after a kind change', () => expect(reduceFilter({ query: 'risk', kind: 'one', statuses: ['open'] }, { type: 'kind', value: 'two' })).toEqual({ query: 'risk', kind: 'two', statuses: [] })); it('toggles status membership immutably', () => { const start = { ...emptyFilter, statuses: ['open'] }; const next = reduceFilter(start, { type: 'toggle-status', value: 'open' }); expect(next.statuses).toEqual([]); expect(start.statuses).toEqual(['open']); }); it('detects an active query', () => expect(hasActiveFilter({ ...emptyFilter, query: 'owner' })).toBe(true)); });

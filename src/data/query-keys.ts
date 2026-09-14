@@ -1,0 +1,1 @@
+export const queryKeys = { workspace: (product: string) => ['workspace', product] as const, records: (product: string, kind: string) => ['workspace', product, 'records', kind] as const, audit: (product: string) => ['workspace', product, 'audit'] as const, analytics: (product: string, revision: number) => ['workspace', product, 'analytics', revision] as const };
