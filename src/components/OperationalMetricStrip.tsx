@@ -1,0 +1,1 @@
+export function OperationalMetricStrip({labels,values}:{labels:readonly[string,string,string];values:readonly[number,number,number]}){return <section className="suite-stats" aria-label="Derived operational metrics">{labels.map((label,index)=><article key={label}><small>{label}</small><strong>{values[index]}</strong></article>)}</section>}

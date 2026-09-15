@@ -1,0 +1,1 @@
+import{useContext}from'react';import{WorkbenchContext}from'./workbenchContext';export function useWorkbench(){const value=useContext(WorkbenchContext);if(!value)throw new Error('useWorkbench must be used inside WorkbenchProvider');return value}

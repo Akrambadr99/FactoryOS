@@ -1,0 +1,5 @@
+export interface OperationalNode{id:string;label:string;capacity:number;demand:number;dependsOn:string[];effectiveFrom:string;effectiveTo:string;version:number}
+export const operationalNodes:OperationalNode[]=[{"id":"FO-512","label":"Torque containment","capacity":9,"demand":8,"dependsOn":[],"effectiveFrom":"2026-09-01","effectiveTo":"2026-12-31","version":2},{"id":"FO-519","label":"Recipe deployment","capacity":8,"demand":9,"dependsOn":["FO-512"],"effectiveFrom":"2026-09-01","effectiveTo":"2026-09-20","version":3},{"id":"FO-524","label":"Genealogy review","capacity":6,"demand":12,"dependsOn":["FO-519"],"effectiveFrom":"2026-09-18","effectiveTo":"2026-12-31","version":4},{"id":"FO-531","label":"Cell restart","capacity":11,"demand":5,"dependsOn":["FO-512"],"effectiveFrom":"2026-09-01","effectiveTo":"2026-12-31","version":5}];
+export const scenarioModes=["Quality first","Balanced restart","Throughput recovery"] as const;
+export const metricLabels=["Released units","Throughput index","Held lots"] as const;
+export const domainCoefficient=5.6;export const secondaryWeight=14;export const riskWeight=8;
