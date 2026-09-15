@@ -28,3 +28,8 @@ test('premium shell is keyboard and mobile ready',async({page})=>{await page.set
 
 
 test('captures the premium desktop overview',async({page})=>{await page.setViewportSize({width:1440,height:1000});await page.goto('/');await expect(page.getByRole('heading',{name:'FactoryOS command center'})).toBeVisible();await page.screenshot({path:'../UI_SCREENSHOTS/FactoryOS-overview.png',fullPage:true})});
+
+
+test('command workbench supports deep links and keyboard navigation',async({page})=>{await page.goto('/command-workbench?case=FO-519');await expect(page.getByRole('heading',{name:'Press 2 recipe revision'})).toBeVisible();const queue=page.getByRole('listbox',{name:'production exception queue'});await queue.focus();await page.keyboard.press('ArrowDown');await expect(page).toHaveURL(/case=FO-524/)});
+
+test('command workbench preserves conflict context',async({page})=>{await page.goto('/command-workbench?case=FO-519');await page.getByLabel('Authority').selectOption('approver');await page.getByLabel(/Decision note/).fill('Preserve this reviewed operational evidence');await page.getByRole('button',{name:'Release recovery plan'}).click();await expect(page.getByRole('alert')).toContainText('Newer server version');await page.getByRole('button',{name:'Load latest version'}).click();await expect(page.getByLabel(/Decision note/)).toHaveValue('Preserve this reviewed operational evidence')});
