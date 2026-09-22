@@ -5,10 +5,11 @@ import type { Execution, ExecutionAction } from './execution'
 export interface OrderAggregate {
   order: Execution
   recallOpened: boolean
+  recallJob: { id: string; sourceRevision: number; status: 'queued' | 'failed' | 'complete'; attempts: number; failureReason: string | null } | null
   causalHistory: readonly { revision: number; action: string; source: string }[]
 }
 const key = 'factoryos:order:PO-8842:v1'
-export const initialOrderAggregate: OrderAggregate = { order: initialExecution, recallOpened: false, causalHistory: [] }
+export const initialOrderAggregate: OrderAggregate = { order: initialExecution, recallOpened: false, recallJob: null, causalHistory: [] }
 export function readOrderAggregate(storage: StoragePort): OrderAggregate {
   const raw = storage.getItem(key)
   if (!raw) return initialOrderAggregate
@@ -17,7 +18,8 @@ export function readOrderAggregate(storage: StoragePort): OrderAggregate {
     typeof value.order !== 'object' || !('phase' in value.order) || !('revision' in value.order) ||
     !('recallOpened' in value) || typeof value.recallOpened !== 'boolean' ||
     !('causalHistory' in value) || !Array.isArray(value.causalHistory)) throw new Error('Invalid production-order record.')
-  return value as OrderAggregate
+  const record = value as OrderAggregate
+  return { ...record, recallJob: record.recallJob ?? null }
 }
 export function executeOrder(aggregate: OrderAggregate, action: ExecutionAction): OrderAggregate {
   const order = advanceExecution(aggregate.order, action)
@@ -27,11 +29,29 @@ export function executeOrder(aggregate: OrderAggregate, action: ExecutionAction)
 export function recallBlockers(aggregate: OrderAggregate): string[] {
   return aggregate.order.phase === 'complete' ? [] : ['Order PO-8842 must complete quality release before recall scope can be opened.']
 }
-export function openRecall(aggregate: OrderAggregate): OrderAggregate {
+export function openRecall(aggregate: OrderAggregate, requestId = 'RECALL-LOT-91'): OrderAggregate {
   if (recallBlockers(aggregate).length) throw new Error(recallBlockers(aggregate)[0])
+  if (aggregate.recallJob?.id === requestId) return aggregate
   if (aggregate.recallOpened) throw new Error('Recall scope is already open.')
-  return { ...aggregate, recallOpened: true, causalHistory: [...aggregate.causalHistory,
+  return { ...aggregate, recallOpened: true, recallJob: { id: requestId, sourceRevision: aggregate.order.revision, status: 'queued', attempts: 0, failureReason: null }, causalHistory: [...aggregate.causalHistory,
     { revision: aggregate.order.revision, action: 'recall-opened', source: 'lot-genealogy' }] }
+}
+export function processRecall(aggregate: OrderAggregate): OrderAggregate {
+  const job = aggregate.recallJob
+  if (job?.status !== 'queued') throw new Error('No queued recall reconciliation exists.')
+  if (aggregate.order.revision !== job.sourceRevision) throw new Error('Order revision changed; create a new reconciliation.')
+  const attempts = job.attempts + 1
+  const status = attempts === 1 ? 'failed' : 'complete'
+  return { ...aggregate, recallJob: { ...job, attempts, status,
+    failureReason: status === 'failed' ? 'LOT-55 genealogy index was temporarily incomplete.' : null },
+    causalHistory: [...aggregate.causalHistory, { revision: aggregate.order.revision, action: 'recall-' + status, source: 'lot-genealogy' }] }
+}
+export function retryRecall(aggregate: OrderAggregate): OrderAggregate {
+  const job = aggregate.recallJob
+  if (job?.status !== 'failed') throw new Error('Only a failed recall reconciliation can be retried.')
+  if (aggregate.order.revision !== job.sourceRevision) throw new Error('Order revision changed; create a new reconciliation.')
+  return { ...aggregate, recallJob: { ...job, status: 'queued', failureReason: null },
+    causalHistory: [...aggregate.causalHistory, { revision: aggregate.order.revision, action: 'recall-retried', source: 'lot-genealogy' }] }
 }
 export function reopenOrder(aggregate: OrderAggregate): OrderAggregate {
   if (aggregate.order.phase !== 'complete') throw new Error('Only a completed order can be reopened.')
