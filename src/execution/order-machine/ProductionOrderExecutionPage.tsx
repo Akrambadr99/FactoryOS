@@ -1,20 +1,24 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
-import {
-  advanceExecution, executionFinding, initialExecution,
-} from './execution'
+import { executionFinding } from './execution'
 import type { ExecutionAction } from './execution'
+import { executeOrder, readOrderAggregate, reopenOrder, saveOrderAggregate } from './orderLedger'
 
 export function ProductionOrderExecutionPage() {
   const { orderId } = useParams()
-  const [order, setOrder] = useState(initialExecution)
+  const [aggregate, setAggregate] = useState(() => readOrderAggregate(window.localStorage))
+  const order = aggregate.order
   const [quantity, setQuantity] = useState(120)
   const [notice, setNotice] = useState('')
   function act(action: ExecutionAction) {
     const finding = executionFinding(order, action)
     if (finding) { setNotice(finding); return }
-    setOrder(current => advanceExecution(current, action))
+    setAggregate(saveOrderAggregate(window.localStorage, executeOrder(aggregate, action)))
     setNotice(`${action.type} recorded at revision ${String(order.revision + 1)}.`)
+  }
+  function reopen() {
+    try { setAggregate(saveOrderAggregate(window.localStorage, reopenOrder(aggregate))); setNotice('Order reopened for quality review.') }
+    catch (error) { setNotice(error instanceof Error ? error.message : 'Reopening failed.') }
   }
   if (orderId && orderId !== order.id) return <main className="suite-page"><p role="alert">Order {orderId} was not found.</p></main>
   return <div className="suite-page">
@@ -46,6 +50,8 @@ export function ProductionOrderExecutionPage() {
         onClick={() => { act({ type: 'approve-quality' }); }}>Approve quality</button>
       <button disabled={Boolean(executionFinding(order, { type: 'complete' }))}
         onClick={() => { act({ type: 'complete' }); }}>Complete order</button>
+      {order.phase === 'complete' && <button onClick={reopen}>Reopen completed order</button>}
+      <p>Recall scope: {aggregate.recallOpened ? 'open' : 'not opened'}</p>
       <p role="status">{notice || 'Complete each gate in sequence.'}</p>
       <details><summary>Execution history</summary>
         <ol>{order.history.map((event, index) => <li key={index}>Revision {index + 2}: {event}</li>)}</ol>

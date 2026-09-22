@@ -1,0 +1,21 @@
+import { expect, test } from '@playwright/test'
+
+test('completed order enables recall and recall protects order reopening', async ({ page }) => {
+  await page.goto('/execution/lots/LOT-91/genealogy?depth=1')
+  await page.getByLabel('Decision authority').selectOption('quality approver')
+  await expect(page.getByRole('button', { name: 'Open recall scope' })).toBeDisabled()
+  await page.goto('/execution/orders/PO-8842')
+  await page.getByRole('button', { name: 'Release material lot' }).click()
+  await page.getByRole('button', { name: 'Restore machine' }).click()
+  await page.getByRole('button', { name: 'Start order' }).click()
+  await page.getByRole('button', { name: 'Record output' }).click()
+  await page.getByRole('button', { name: 'Approve quality' }).click()
+  await page.getByRole('button', { name: 'Complete order' }).click()
+  await page.goto('/execution/lots/LOT-91/genealogy?depth=1')
+  await page.getByLabel('Decision authority').selectOption('quality approver')
+  await page.getByRole('button', { name: 'Open recall scope' }).click()
+  await expect(page.getByText('Recall open')).toBeVisible()
+  await page.goto('/execution/orders/PO-8842')
+  await page.getByRole('button', { name: 'Reopen completed order' }).click()
+  await expect(page.getByRole('status')).toContainText('depends on the completed order')
+})
