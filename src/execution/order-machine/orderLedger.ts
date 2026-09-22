@@ -6,12 +6,22 @@ export interface OrderAggregate {
   order: Execution
   recallOpened: boolean
   recallJob: { id: string; sourceRevision: number; status: 'queued' | 'failed' | 'complete'; attempts: number; failureReason: string | null; owner?: RecallActor } | null
+  recoveryAssignments?: readonly RecallRecoveryAssignment[] | undefined
   causalHistory: readonly { revision: number; action: string; source: string; actor?: RecallActor; reason?: string }[]
+}
+export interface RecallRecoveryAssignment {
+  id: string
+  jobId: string
+  sourceRevision: number
+  assignee: RecallActor
+  status: 'open' | 'superseded' | 'completed' | 'stale'
+  supersedesId?: string
+  reason: string
 }
 export type RecallActor = 'production planner' | 'quality approver'
 export interface RecallPolicy { allowed: boolean; blockers: string[]; queue: 'reconciliation' | 'recovery' | 'complete' }
 const key = 'factoryos:order:PO-8842:v1'
-export const initialOrderAggregate: OrderAggregate = { order: initialExecution, recallOpened: false, recallJob: null, causalHistory: [] }
+export const initialOrderAggregate: OrderAggregate = { order: initialExecution, recallOpened: false, recallJob: null, recoveryAssignments: [], causalHistory: [] }
 export function readOrderAggregate(storage: StoragePort): OrderAggregate {
   const raw = storage.getItem(key)
   if (!raw) return initialOrderAggregate
@@ -21,7 +31,11 @@ export function readOrderAggregate(storage: StoragePort): OrderAggregate {
     !('recallOpened' in value) || typeof value.recallOpened !== 'boolean' ||
     !('causalHistory' in value) || !Array.isArray(value.causalHistory)) throw new Error('Invalid production-order record.')
   const record = value as OrderAggregate
-  return { ...record, recallJob: record.recallJob ? { ...record.recallJob, owner: record.recallJob.owner ?? 'production planner' } : null }
+  return { ...record, recallJob: record.recallJob ? { ...record.recallJob, owner: record.recallJob.owner ?? 'production planner' } : null,
+    recoveryAssignments: record.recoveryAssignments ?? [] }
+}
+export function recoveryQueue(aggregate: OrderAggregate, actor: RecallActor): RecallRecoveryAssignment[] {
+  return (aggregate.recoveryAssignments ?? []).filter(item => item.assignee === actor && item.status === 'open')
 }
 export function executeOrder(aggregate: OrderAggregate, action: ExecutionAction): OrderAggregate {
   const order = advanceExecution(aggregate.order, action)
@@ -44,7 +58,13 @@ export function processRecall(aggregate: OrderAggregate): OrderAggregate {
   if (aggregate.order.revision !== job.sourceRevision) throw new Error('Order revision changed; create a new reconciliation.')
   const attempts = job.attempts + 1
   const status = attempts === 1 ? 'failed' : 'complete'
-  return { ...aggregate, recallJob: { ...job, attempts, status,
+  const assignment: RecallRecoveryAssignment | null = status === 'failed' ? {
+    id: `RECOVERY-${job.id}-${String(attempts)}`, jobId: job.id, sourceRevision: job.sourceRevision,
+    assignee: job.owner ?? 'production planner', status: 'open', reason: 'Incomplete lot genealogy index',
+  } : null
+  return { ...aggregate, recoveryAssignments: [...(aggregate.recoveryAssignments ?? []).map(item =>
+    item.status === 'open' ? { ...item, status: 'completed' as const } : item), ...(assignment ? [assignment] : [])],
+    recallJob: { ...job, attempts, status,
     failureReason: status === 'failed' ? 'LOT-55 genealogy index was temporarily incomplete.' : null },
     causalHistory: [...aggregate.causalHistory, { revision: aggregate.order.revision, action: 'recall-' + status, source: 'lot-genealogy' }] }
 }
@@ -54,6 +74,8 @@ export function recallRecoveryPolicy(aggregate: OrderAggregate, actor: RecallAct
   if (job?.status !== 'failed') blockers.push('Only a failed recall reconciliation can be retried.')
   if (job && aggregate.order.revision !== job.sourceRevision) blockers.push('Order revision changed; create a new reconciliation.')
   if (job?.owner && job.owner !== actor) blockers.push(`Recall recovery belongs to ${job.owner}.`)
+  if (aggregate.recoveryAssignments?.length && !recoveryQueue(aggregate, actor).some(item =>
+    item.jobId === job?.id && item.sourceRevision === aggregate.order.revision)) blockers.push('A current recovery assignment must belong to this actor.')
   if (job && job.attempts > 1 && actor !== 'quality approver') blockers.push('Repeated failure requires quality-approver recovery.')
   return { allowed: blockers.length === 0, blockers, queue: job?.status === 'complete' ? 'complete' : job?.status === 'failed' ? 'recovery' : 'reconciliation' }
 }
@@ -63,7 +85,13 @@ export function reassignRecall(aggregate: OrderAggregate, actor: RecallActor, ow
   if (job?.status !== 'failed') throw new Error('Only failed recall recovery can be reassigned.')
   if (reason.trim().length < 12) throw new Error('Explain the recall ownership change.')
   if (job.owner === owner) throw new Error('Recall recovery is already assigned to this owner.')
-  return { ...aggregate, recallJob: { ...job, owner }, causalHistory: [...aggregate.causalHistory,
+  const current = (aggregate.recoveryAssignments ?? []).find(item => item.jobId === job.id && item.status === 'open')
+  const successor: RecallRecoveryAssignment = { id: `RECOVERY-${job.id}-${String(job.attempts)}-${String(aggregate.causalHistory.length + 1)}`,
+    jobId: job.id, sourceRevision: job.sourceRevision, assignee: owner, status: 'open', reason,
+    ...(current ? { supersedesId: current.id } : {}) }
+  return { ...aggregate, recallJob: { ...job, owner },
+    recoveryAssignments: [...(aggregate.recoveryAssignments ?? []).map(item => item.id === current?.id ?
+      { ...item, status: 'superseded' as const } : item), successor], causalHistory: [...aggregate.causalHistory,
     { revision: aggregate.order.revision, action: 'recall-reassigned', source: 'lot-genealogy', actor, reason }] }
 }
 export function retryRecall(aggregate: OrderAggregate, actor: RecallActor = 'production planner'): OrderAggregate {
@@ -72,6 +100,8 @@ export function retryRecall(aggregate: OrderAggregate, actor: RecallActor = 'pro
   if (!policy.allowed) throw new Error(policy.blockers[0])
   if (!job) throw new Error('No recall reconciliation exists.')
   return { ...aggregate, recallJob: { ...job, status: 'queued', failureReason: null },
+    recoveryAssignments: aggregate.recoveryAssignments?.map(item => item.status === 'open' ?
+      { ...item, status: 'completed' as const } : item),
     causalHistory: [...aggregate.causalHistory, { revision: aggregate.order.revision, action: 'recall-retried', source: 'lot-genealogy', actor }] }
 }
 export function reopenOrder(aggregate: OrderAggregate): OrderAggregate {
