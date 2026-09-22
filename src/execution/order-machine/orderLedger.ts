@@ -14,6 +14,7 @@ export interface RecallRecoveryAssignment {
   jobId: string
   sourceRevision: number
   assignee: RecallActor
+  assigneeId?: string | null
   status: 'open' | 'superseded' | 'completed' | 'stale'
   supersedesId?: string
   reason: string
@@ -94,11 +95,13 @@ export function reassignRecall(aggregate: OrderAggregate, actor: RecallActor, ow
       { ...item, status: 'superseded' as const } : item), successor], causalHistory: [...aggregate.causalHistory,
     { revision: aggregate.order.revision, action: 'recall-reassigned', source: 'lot-genealogy', actor, reason }] }
 }
-export function retryRecall(aggregate: OrderAggregate, actor: RecallActor = 'production planner'): OrderAggregate {
+export function retryRecall(aggregate: OrderAggregate, actor: RecallActor = 'production planner', operatorId?: string): OrderAggregate {
   const job = aggregate.recallJob
   const policy = recallRecoveryPolicy(aggregate, actor)
   if (!policy.allowed) throw new Error(policy.blockers[0])
   if (!job) throw new Error('No recall reconciliation exists.')
+  const claimed = (aggregate.recoveryAssignments ?? []).find(item => item.status === 'open' && item.jobId === job.id)
+  if (claimed?.assigneeId && claimed.assigneeId !== operatorId) throw new Error('Recall recovery belongs to another named operator.')
   return { ...aggregate, recallJob: { ...job, status: 'queued', failureReason: null },
     recoveryAssignments: aggregate.recoveryAssignments?.map(item => item.status === 'open' ?
       { ...item, status: 'completed' as const } : item),
