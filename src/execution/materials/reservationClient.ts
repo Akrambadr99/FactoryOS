@@ -1,4 +1,5 @@
 import { validateReservationSnapshot, type ReservationCommand, type ReservationSnapshot } from './reservations'
+import { createOrderSyncPreview, type OrderSyncPreview } from './orderSyncPreview'
 
 export class ReservationClientError extends Error {
   readonly code: string
@@ -6,17 +7,25 @@ export class ReservationClientError extends Error {
 }
 export interface ReservationClient {
   read(signal?: AbortSignal): Promise<ReservationSnapshot>
+  previewOrders(collection: unknown, signal?: AbortSignal): Promise<{ snapshot: ReservationSnapshot; preview: OrderSyncPreview }>
   execute(command: ReservationCommand, signal?: AbortSignal): Promise<{ snapshot: ReservationSnapshot; replayed: boolean }>
 }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value) }
+function equalJson(actual: unknown, expected: unknown): boolean {
+  if (actual === expected) return true
+  if (Array.isArray(expected)) return Array.isArray(actual) && actual.length === expected.length && expected.every((value: unknown, index) => equalJson(actual[index], value))
+  if (!object(expected) || !object(actual)) return false
+  const keys = Object.keys(expected)
+  return Object.keys(actual).length === keys.length && keys.every(key => Object.hasOwn(actual, key) && equalJson(actual[key], expected[key]))
+}
 export function createReservationClient(fetcher: typeof fetch = globalThis.fetch): ReservationClient {
-  async function request(command: ReservationCommand | undefined, signal?: AbortSignal): Promise<unknown> {
+  async function request(body: unknown, signal?: AbortSignal, route = '/api/reservations'): Promise<unknown> {
     let response: Response
     try {
-      response = await fetcher('http://127.0.0.1:4404/api/reservations', {
-        method: command ? 'POST' : 'GET', credentials: 'omit', cache: 'no-store', redirect: 'error',
-        headers: { 'X-FactoryOS-Client': 'reservations', ...(command ? { 'Content-Type': 'application/json' } : {}) },
-        ...(command ? { body: JSON.stringify(command) } : {}), ...(signal ? { signal } : {}),
+      response = await fetcher('http://127.0.0.1:4404' + route, {
+        method: body === undefined ? 'GET' : 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
+        headers: { 'X-FactoryOS-Client': 'reservations', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...(signal ? { signal } : {}),
       })
     } catch (error) {
       if (object(error) && error['name'] === 'AbortError') throw error
@@ -46,6 +55,24 @@ export function createReservationClient(fetcher: typeof fetch = globalThis.fetch
   }
   return {
     async read(signal) { return parse(await request(undefined, signal)) },
+    async previewOrders(collection, signal) {
+      let captured: unknown
+      try {
+        const envelope: unknown = JSON.parse(JSON.stringify({ collection }))
+        if (!object(envelope) || !Object.hasOwn(envelope, 'collection')) throw new Error('Missing collection')
+        captured = envelope['collection']
+      } catch { throw new ReservationClientError('invalid_source', 'The saved-order collection could not be captured safely. Review its source before requesting a preview.') }
+      const value = await request({ collection: captured }, signal, '/api/reservations/order-sync-preview')
+      if (!object(value) || Object.keys(value).length !== 2 || !Object.hasOwn(value, 'snapshot') || !Object.hasOwn(value, 'preview')) {
+        throw new ReservationClientError('invalid_response', 'The order-sync review could not be verified. Request a new preview; no sync was submitted.')
+      }
+      const snapshot = parse(value['snapshot'])
+      let preview: OrderSyncPreview
+      try { preview = createOrderSyncPreview(snapshot, captured) }
+      catch { throw new ReservationClientError('invalid_response', 'The preview source or ledger could not be verified. Request a new preview; no sync was submitted.') }
+      if (!equalJson(value['preview'], preview)) throw new ReservationClientError('invalid_response', 'The service preview does not match the captured source and ledger. Request a new preview; no sync was submitted.')
+      return { snapshot, preview }
+    },
     async execute(command, signal) {
       const captured = { ...command }
       const value = await request(captured, signal)

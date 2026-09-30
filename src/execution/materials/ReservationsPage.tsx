@@ -3,12 +3,16 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { PageTitle } from '../../components/PageTitle'
 import { FocusDialog } from '../../components/FocusDialog'
 import { readOrderCollection } from '../order-machine/orderCollection'
+import type { OrderCollection } from '../order-machine/orderCollection'
 import { createReservationClient, ReservationClientError, type ReservationClient } from './reservationClient'
+import { OrderSyncReview } from './OrderSyncReview'
+import type { OrderSyncPreview } from './orderSyncPreview'
 import type { MaterialReservation, ReservationCommand, ReservationOrder, ReservationSnapshot } from './reservations'
 import './reservations.css'
 
 interface Draft { lotId: string; quantity: string; note: string }
 interface Pending { command: ReservationCommand; summary: string }
+interface SyncReview { collection: OrderCollection; sourceFingerprint: string; preview: OrderSyncPreview; stale: boolean; focusOnOpen: boolean }
 function eligible(order: ReservationOrder) { return !order.archived && ['material-hold', 'ready'].includes(order.phase) }
 function errorMessage(error: unknown) {
   return error instanceof ReservationClientError ? error.message : 'This action could not be completed safely. Your input and saved browser orders are unchanged.'
@@ -27,6 +31,11 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
   const [pending, setPending] = useState<Pending | null>(null)
   const [release, setRelease] = useState<MaterialReservation | null>(null)
   const [reason, setReason] = useState('')
+  const [syncReview, setSyncReview] = useState<SyncReview | null>(null)
+  const [previewing, setPreviewing] = useState(false), [reviewFailed, setReviewFailed] = useState(false)
+  const reviewRef = useRef<SyncReview | null>(null), reviewVersion = useRef(0)
+  const reviewAbort = useRef<AbortController | null>(null)
+  const syncControl = useRef<HTMLButtonElement>(null), focusSync = useRef(false)
   const ledgerRef = useRef<ReservationSnapshot | null>(null)
   const readVersion = useRef(0), writeVersion = useRef(0)
   const readAbort = useRef<AbortController | null>(null), writeAbort = useRef<AbortController | null>(null)
@@ -51,14 +60,15 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
   const noteInvalid = Boolean(draft.note) && (draft.note.trim().length < 8 || draft.note.trim().length > 240)
   const alreadyReserved = holds.some(hold => hold.status === 'active' && hold.lotId === draft.lotId)
   useEffect(() => () => {
-    readVersion.current++; writeVersion.current++
-    readAbort.current?.abort(); writeAbort.current?.abort()
+    readVersion.current++; writeVersion.current++; reviewVersion.current++
+    readAbort.current?.abort(); writeAbort.current?.abort(); reviewAbort.current?.abort()
   }, [client])
   useEffect(() => {
     if (saving) return
-    if (focusRetry.current) { focusRetry.current = false; retryControl.current?.focus() }
+    if (focusSync.current) { focusSync.current = false; syncControl.current?.focus() }
+    else if (focusRetry.current) { focusRetry.current = false; retryControl.current?.focus() }
     else if (focusFeedback.current) { focusFeedback.current = false; feedback.current?.focus() }
-  }, [error, notice, saving])
+  }, [error, notice, saving, previewing])
 
   function view(changes: Record<string, string>, replace = false) {
     const next = new URLSearchParams(latestParams.current)
@@ -73,6 +83,7 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
     ledgerRef.current = next; setLedger(next)
   }
   async function refresh() {
+    invalidateReview()
     const version = ++readVersion.current
     readAbort.current?.abort(); const controller = new AbortController(); readAbort.current = controller
     setLoading(true); setError(''); setNotice('')
@@ -93,7 +104,7 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
       if (version !== writeVersion.current) return
       readVersion.current++; readAbort.current?.abort(); setLoading(false)
       accept(result.snapshot); pendingRef.current = null; setPending(null)
-      if (attempt.command.kind === 'release') focusFeedback.current = true
+      if (attempt.command.kind === 'release' || attempt.command.kind === 'sync-orders') focusFeedback.current = true
       setNotice((result.replayed ? 'Existing receipt confirmed. ' : 'Saved. ') + attempt.summary + ' Browser order records were not changed.')
     } catch (error) {
       if (version === writeVersion.current) {
@@ -101,7 +112,7 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
         const activeElement = document.activeElement
         // The closed release dialog cannot restore a disabled trigger. Recover
         // keyboard focus, but do not interrupt someone already editing a draft.
-        if (attempt.command.kind === 'release' && (activeElement === document.body ||
+        if ((attempt.command.kind === 'release' || attempt.command.kind === 'sync-orders') && (activeElement === document.body ||
           (activeElement instanceof HTMLButtonElement && activeElement.disabled))) focusRetry.current = true
       }
     }
@@ -109,14 +120,54 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
   }
   function begin(command: ReservationCommand, summary: string) {
     if (pendingRef.current) return
+    invalidateReview()
     const attempt = { command, summary }; pendingRef.current = attempt; setPending(attempt); void submit(attempt)
   }
-  function syncOrders() {
-    if (!ledger || pendingRef.current) return
+  function invalidateReview() {
+    reviewVersion.current++; reviewAbort.current?.abort()
+    reviewRef.current = null; setSyncReview(null); setPreviewing(false); setReviewFailed(false)
+  }
+  function cancelReview() {
+    invalidateReview(); setError(''); setNotice('Sync review cancelled. No synchronization was submitted; your drafts and selection are preserved.')
+    focusSync.current = true
+  }
+  async function syncOrders() {
+    if (!ledgerRef.current || pendingRef.current) return
+    invalidateReview()
+    const version = reviewVersion.current
+    const controller = new AbortController(); reviewAbort.current = controller
+    readVersion.current++; readAbort.current?.abort(); setLoading(false)
+    setPreviewing(true); setError(''); setNotice('')
     try {
       const collection = readOrderCollection(window.localStorage)
-      begin({ kind: 'sync-orders', expectedRevision: ledger.revision, requestId: crypto.randomUUID(), collection }, 'Saved order references synchronized.')
-    } catch { setError('Saved orders could not be read safely. Open the recovery workspace to inspect them, then retry. No browser data was replaced.') }
+      const sourceFingerprint = JSON.stringify(collection)
+      const result = await client.previewOrders(collection, controller.signal)
+      if (version !== reviewVersion.current) return
+      accept(result.snapshot)
+      const focusOnOpen = document.activeElement === document.body || document.activeElement === syncControl.current
+      const review = { collection, sourceFingerprint, preview: result.preview, stale: false, focusOnOpen }
+      reviewRef.current = review; setSyncReview(review)
+      setNotice('Order synchronization reviewed. Nothing has been saved. Check the changes before confirming.')
+    } catch (error) {
+      if (version === reviewVersion.current) {
+        setReviewFailed(true)
+        setError(error instanceof ReservationClientError ? error.message : 'Saved orders could not be reviewed safely. Check the recovery workspace and service, then review again. No synchronization was submitted.')
+      }
+    } finally { if (version === reviewVersion.current) setPreviewing(false) }
+  }
+  function confirmSync() {
+    const review = reviewRef.current
+    if (!review || review.stale || review.preview.blocked > 0 || review.preview.changes.length === 0 || pendingRef.current) return
+    try {
+      if (JSON.stringify(readOrderCollection(window.localStorage)) !== review.sourceFingerprint || ledgerRef.current?.revision !== review.preview.revision) {
+        const stale = { ...review, stale: true }; reviewRef.current = stale; setSyncReview(stale)
+        setError('Saved orders or the loaded ledger changed after review. Review the latest saved orders before confirming.'); return
+      }
+    } catch {
+      const stale = { ...review, stale: true }; reviewRef.current = stale; setSyncReview(stale)
+      setError('Saved orders cannot be verified now. Repair the source, then review again. No synchronization was submitted.'); return
+    }
+    begin({ kind: 'sync-orders', expectedRevision: review.preview.revision, requestId: crypto.randomUUID(), collection: review.collection }, 'Reviewed order references synchronized.')
   }
   function reserve() {
     if (!ledger || !selected || pendingRef.current) return
@@ -141,15 +192,21 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
     <section className="reservation-service" aria-label="Reservation service">
       <div><h2>{ledger ? 'Last loaded reservation ledger' : 'Connect your local service'}</h2><p>{ledger ? `Ledger revision ${String(ledger.revision)} · Last successfully loaded state` : 'Start npm run build:server, then npm run start:server. Nothing is sent automatically.'}</p></div>
       <div className="reservation-actions"><button type="button" disabled={loading || saving} onClick={() => { void refresh() }}>{ledger ? 'Refresh reservations' : 'Connect reservation service'}</button>
-        {ledger && <button type="button" disabled={saving || Boolean(pending)} onClick={syncOrders}>Sync saved orders</button>}</div>
+        {ledger && <button type="button" ref={syncControl} disabled={saving || Boolean(pending) || previewing} onClick={() => { void syncOrders() }}>Sync saved orders</button>}</div>
     </section>
     {!ledger && <details className="reservation-upgrade-help"><summary>Upgrading an existing JSON ledger?</summary>
       <p>The service will not replace it automatically. Stop the service, then run this read-only preview from the repository:</p>
       <code>npm run reservations:migrate -- preview</code>
       <p>Review the counts and source checksum. Apply requires that exact checksum; the original JSON remains preserved. Use the same data directory for preview, apply and the service. Run the migration command with --help for its syntax.</p>
     </details>}
-    <p className="reservation-announcement" role="status" aria-live="polite" tabIndex={-1} ref={feedback}>{saving ? 'Saving the captured request… Your newer draft edits will be kept.' : loading ? 'Loading reservation ledger…' : notice}</p>
+    <p className="reservation-announcement" role="status" aria-live="polite" tabIndex={-1} ref={feedback}>{saving ? 'Saving the captured request… Your newer draft edits will be kept.' : previewing ? 'Reviewing saved orders against the service… No changes are being saved.' : loading ? 'Loading reservation ledger…' : notice}</p>
     {error && <p className="reservation-error" role="alert">{error}</p>}
+    {(previewing || reviewFailed) && <section className="order-sync-review" aria-label="Order synchronization preview">
+      <h2>{previewing ? 'Preparing order review' : 'Order review unavailable'}</h2><p>Your selection and reservation drafts are preserved. No synchronization was submitted.</p>
+      <div className="reservation-actions">{reviewFailed && <button type="button" onClick={() => { void syncOrders() }}>Review latest saved orders</button>}
+        <button type="button" onClick={cancelReview}>Cancel sync review</button></div>
+    </section>}
+    {syncReview && <OrderSyncReview preview={syncReview.preview} stale={syncReview.stale} focusOnOpen={syncReview.focusOnOpen} onCancel={cancelReview} onConfirm={confirmSync} onRefresh={() => { void syncOrders() }} />}
     {pending && <section className="reservation-pending" aria-label="Pending reservation request"><h2>{saving ? 'Request in progress' : 'Request not confirmed'}</h2><p>{pending.summary}</p>
       <p>A retry sends the same captured values and revision. A lost response may mean it already saved. For a revision conflict, refresh, discard this request, then review and submit again explicitly.</p>
       <div className="reservation-actions"><button type="button" ref={retryControl} disabled={saving} onClick={() => { void submit(pending) }}>Retry same request</button><button type="button" disabled={saving} onClick={() => {
@@ -158,7 +215,7 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
     </section>}
     {ledger && <>
       <dl className="reservation-metrics"><div><dt>Synced orders</dt><dd>{ledger.orders.length}</dd></div><div><dt>Eligible to reserve</dt><dd>{ledger.orders.filter(eligible).length}</dd></div><div><dt>Active holds</dt><dd>{active.length}</dd></div><div><dt>Recorded changes</dt><dd>{ledger.events.length}</dd></div></dl>
-      {!ledger.orders.length && <section className="reservation-empty"><h2>Bring your saved orders into view</h2><p>Use Sync saved orders to copy the current browser collection. No order is imported automatically. Demo stock is separate from the genealogy indexes used by existing workflows.</p></section>}
+      {!ledger.orders.length && <section className="reservation-empty"><h2>Bring your saved orders into view</h2><p>Use Sync saved orders to review the current browser collection, then confirm explicitly. No order is imported automatically. Demo stock is separate from the genealogy indexes used by existing workflows.</p></section>}
       <div className="reservation-layout"><section className="reservation-master" aria-label="Synced orders"><h2>Production orders</h2>
         <label>Find order<input type="search" value={query} onChange={event => { view({ q: event.target.value, page: '' }, true) }} /></label>
         <div className="reservation-filter-row"><label>Order state<select value={showAll ? 'all' : 'eligible'} onChange={event => { view({ state: event.target.value, page: '' }) }}><option value="eligible">Eligible to reserve</option><option value="all">All synced orders</option></select></label>
@@ -185,7 +242,7 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
         </form>
         <section className="reservation-holds" aria-label="Order material holds"><h3>Reservation history</h3>{holds.length ? <ul>{holds.toReversed().map(hold => <li key={hold.id}>
           <div><strong>{hold.quantity} units · {hold.lotId}</strong><span>{hold.status === 'active' ? 'Active hold' : 'Released'} · Revision {hold.createdRevision}</span><p>{hold.note}</p>{hold.releaseReason && <p>Release: {hold.releaseReason}</p>}</div>
-          {hold.status === 'active' && <button type="button" aria-label={'Release ' + hold.id} disabled={saving || Boolean(pending)} onClick={() => { setReason(''); setRelease(hold) }}>Release hold</button>}
+          {hold.status === 'active' && <button type="button" aria-label={'Release ' + hold.id} disabled={saving || Boolean(pending)} onClick={() => { invalidateReview(); setReason(''); setRelease(hold) }}>Release hold</button>}
         </li>)}</ul> : <p>No reservations for this order yet.</p>}</section>
       </> : <div className="reservation-empty"><h2>{selectedId ? 'Order is not in this ledger' : 'Select an order'}</h2><p>{selectedId ? 'Sync saved orders or choose a synced order. Your URL selection has been kept.' : 'Choose a production order to review available stock and reservation history.'}</p></div>}</section></div>
       <details className="reservation-audit"><summary>Ledger activity · {ledger.events.length} changes</summary><ol>{ledger.events.toReversed().slice(0, 30).map(event => <li key={event.sequence}><span>r{event.sequence}</span> {event.summary}</li>)}</ol><p>Showing the latest 30 changes. The service retains the bounded ledger history.</p></details>

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createOrder, seedOrderCollection } from '../order-machine/orderCollection'
 import { ReservationsPage } from './ReservationsPage'
 import { ReservationClientError, type ReservationClient } from './reservationClient'
+import { createOrderSyncPreview } from './orderSyncPreview'
 import { applyReservationCommand, createReservationState, reservationSnapshot, type ReservationState } from './reservations'
 
 const collectionKey = 'factoryos:production-orders:v1'
@@ -33,14 +34,17 @@ function setup(initial: ReservationState = synced, url = '/execution/reservation
   localStorage.setItem('reservation:unrelated', 'retained unrelated bytes')
   let state = initial
   const read = vi.fn<ReservationClient['read']>().mockImplementation(() => Promise.resolve(reservationSnapshot(state)))
+  const previewOrders = vi.fn<ReservationClient['previewOrders']>().mockImplementation(collection => Promise.resolve({
+    snapshot: reservationSnapshot(state), preview: createOrderSyncPreview(reservationSnapshot(state), collection),
+  }))
   const execute = vi.fn<ReservationClient['execute']>().mockImplementation(command => {
     const result = applyReservationCommand(state, command)
     state = result.state
     return Promise.resolve({ snapshot: result.snapshot, replayed: result.replayed })
   })
-  const client: ReservationClient = { read, execute }
+  const client: ReservationClient = { read, execute, previewOrders }
   const mounted = render(<MemoryRouter initialEntries={[url]}><ReservationsPage client={client} /><LocationProbe /></MemoryRouter>)
-  return { ...mounted, read, execute, user: userEvent.setup() }
+  return { ...mounted, read, execute, previewOrders, user: userEvent.setup() }
 }
 async function connect(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Connect reservation service' }))
@@ -221,6 +225,8 @@ describe('material reservation workbench interaction', () => {
     execute.mockReturnValueOnce(pending.promise)
     await connect(user)
     await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    expect(execute).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm order sync' }))
     const captured = execute.mock.calls[0]![0]
     expect(captured).toMatchObject({ kind: 'sync-orders', expectedRevision: 0, collection: source })
     localStorage.setItem(collectionKey, JSON.stringify(createOrder(source, 'PO-9902', 'packaging', 'LOT-76')))
@@ -230,6 +236,211 @@ describe('material reservation workbench interaction', () => {
     expect(screen.queryByRole('button', { name: 'Select order PO-9902' })).not.toBeInTheDocument()
     expect(localStorage.getItem(collectionKey)).toContain('PO-9902')
     expect(localStorage.getItem('reservation:unrelated')).toBe('retained unrelated bytes')
+  })
+
+  it('reviews without writes, focuses the review heading, and restores focus when cancelled', async () => {
+    const { user, previewOrders, execute } = setup(createReservationState())
+    const write = vi.spyOn(Storage.prototype, 'setItem')
+    await connect(user)
+    const trigger = screen.getByRole('button', { name: 'Sync saved orders' })
+    trigger.focus(); await user.keyboard('{Enter}')
+    expect(previewOrders.mock.calls[0]![0]).toEqual(source)
+    expect(screen.getByRole('heading', { name: 'Review order synchronization' })).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Confirm order sync' })).toBeEnabled()
+    expect(execute).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Cancel sync review' }))
+    expect(trigger).toHaveFocus()
+    expect(screen.queryByRole('region', { name: 'Review order synchronization' })).not.toBeInTheDocument()
+    expect(execute).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Current address')).toHaveTextContent('order=PO-8842&source=unit-proof')
+  })
+
+  it('requires another review if saved source changes before first confirmation', async () => {
+    const { user, execute } = setup(createReservationState())
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    localStorage.setItem(collectionKey, JSON.stringify(createOrder(source, 'PO-9902', 'packaging', 'LOT-76')))
+    await user.click(screen.getByRole('button', { name: 'Confirm order sync' }))
+    expect(execute).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Confirm order sync' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('changed after review')
+    await user.click(screen.getByRole('button', { name: 'Review latest saved orders' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm order sync' }))
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Select order PO-9902' })).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Review order synchronization' })).not.toBeInTheDocument()
+  })
+
+  it('rejects an unreadable source after review without sending or replacing it', async () => {
+    const { user, execute } = setup(createReservationState())
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    localStorage.setItem(collectionKey, '{broken')
+    await user.click(screen.getByRole('button', { name: 'Confirm order sync' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('cannot be verified now')
+    expect(screen.getByRole('button', { name: 'Confirm order sync' })).toBeDisabled()
+    expect(execute).not.toHaveBeenCalled()
+    expect(localStorage.getItem(collectionKey)).toBe('{broken')
+  })
+
+  it('does not create no-op history and preserves reservation drafts during review', async () => {
+    const { user, execute } = setup()
+    await connect(user); draft('21', 'Keep this unsent note')
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    expect(screen.getByText(/Order references already match/)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Confirm order sync' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Cancel sync review' }))
+    expect(screen.getByLabelText('Units to reserve')).toHaveValue(21)
+    expect(screen.getByLabelText('Reservation note')).toHaveValue('Keep this unsent note')
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('merges rapid edits into the latest order draft before a sync review', async () => {
+    const { user } = setup()
+    await connect(user)
+    const units = screen.getByLabelText('Units to reserve'), note = screen.getByLabelText('Reservation note')
+    act(() => {
+      fireEvent.change(units, { target: { value: '17' } })
+      fireEvent.change(note, { target: { value: 'Rapidly entered planner note' } })
+    })
+    expect(units).toHaveValue(17)
+    expect(note).toHaveValue('Rapidly entered planner note')
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    await user.click(screen.getByRole('button', { name: 'Cancel sync review' }))
+    expect(units).toHaveValue(17)
+    expect(note).toHaveValue('Rapidly entered planner note')
+  })
+
+  it('requires removal acknowledgement, keeps full replacement semantics when filtered, and resets acknowledgement on re-review', async () => {
+    const { user, execute } = setup()
+    const reduced = { ...source, orders: source.orders.filter(order => order.id !== 'PO-9901') }
+    localStorage.setItem(collectionKey, JSON.stringify(reduced))
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    const label = 'I understand removed order references leave this ledger; recorded history stays.'
+    expect(screen.getByRole('button', { name: 'Confirm order sync' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: label }))
+    expect(screen.getByRole('button', { name: 'Confirm order sync' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Review latest saved orders' }))
+    expect(screen.getByRole('checkbox', { name: label })).not.toBeChecked()
+    await user.click(screen.getByRole('checkbox', { name: label }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Review changes' }), 'added')
+    expect(screen.getByText(/No changes match this filter/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Confirm order sync' }))
+    expect(execute.mock.calls[0]![0]).toMatchObject({ kind: 'sync-orders', collection: reduced, expectedRevision: 1 })
+  })
+
+  it('shows changed fields and blocks the complete review when an affected order has an active hold', async () => {
+    const reserved = applyReservationCommand(synced, { kind: 'reserve', requestId: reserveId, expectedRevision: 1,
+      orderId: 'PO-8842', lotId: 'MAT-ALLOY', quantity: 20, note: 'Existing held order' }).state
+    const { user, execute } = setup(reserved)
+    const changed = { ...source, orders: source.orders.map(order => order.id === 'PO-8842' ? { ...order, archived: true } : order) }
+    localStorage.setItem(collectionKey, JSON.stringify(changed))
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    expect(screen.getByText(/1 changed orders have active material holds/)).toBeVisible()
+    expect(screen.getByText('Before: Active')).toBeVisible()
+    expect(screen.getByText('After: Archived')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Confirm order sync' })).toBeDisabled()
+    expect(execute).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Cancel sync review' }))
+    expect(screen.getByRole('button', { name: 'Release ' + reserveId })).toBeEnabled()
+  })
+
+  it('ignores a preview arriving after refresh and aborts the cancelled request', async () => {
+    const { user, previewOrders, execute } = setup(createReservationState())
+    const response = deferred<Awaited<ReturnType<ReservationClient['previewOrders']>>>()
+    previewOrders.mockReturnValueOnce(response.promise)
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    const signal = previewOrders.mock.calls[0]![1]
+    expect(screen.getByRole('heading', { name: 'Preparing order review' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Refresh reservations' }))
+    expect(signal?.aborted).toBe(true)
+    const snapshot = reservationSnapshot(createReservationState())
+    await resolve(response, { snapshot, preview: createOrderSyncPreview(snapshot, source) })
+    expect(screen.queryByRole('region', { name: 'Review order synchronization' })).not.toBeInTheDocument()
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late preview after a reservation write and preserves the newer revision', async () => {
+    const { user, previewOrders } = setup()
+    const response = deferred<Awaited<ReturnType<ReservationClient['previewOrders']>>>()
+    previewOrders.mockReturnValueOnce(response.promise)
+    await connect(user); draft('20', 'Write while preview waits')
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    await user.click(screen.getByRole('button', { name: 'Reserve material' }))
+    const snapshot = reservationSnapshot(synced)
+    await resolve(response, { snapshot, preview: createOrderSyncPreview(snapshot, source) })
+    expect(screen.queryByRole('region', { name: 'Review order synchronization' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Ledger revision 2/)).toBeVisible()
+  })
+
+  it('does not steal newer draft focus when a delayed review arrives', async () => {
+    const { user, previewOrders } = setup()
+    const response = deferred<Awaited<ReturnType<ReservationClient['previewOrders']>>>()
+    previewOrders.mockReturnValueOnce(response.promise)
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    const note = screen.getByLabelText('Reservation note')
+    await user.click(note); fireEvent.change(note, { target: { value: 'Keep editing while preview loads' } })
+    const snapshot = reservationSnapshot(synced)
+    await resolve(response, { snapshot, preview: createOrderSyncPreview(snapshot, source) })
+    expect(screen.getByRole('region', { name: 'Review order synchronization' })).toBeVisible()
+    expect(note).toHaveFocus()
+    expect(note).toHaveValue('Keep editing while preview loads')
+  })
+
+  it('invalidates a delayed review when opening a release decision and keeps dialog focus', async () => {
+    const reserved = applyReservationCommand(synced, { kind: 'reserve', requestId: reserveId, expectedRevision: 1,
+      orderId: 'PO-8842', lotId: 'MAT-ALLOY', quantity: 20, note: 'Hold for review focus test' }).state
+    const { user, previewOrders } = setup(reserved)
+    const response = deferred<Awaited<ReturnType<ReservationClient['previewOrders']>>>()
+    previewOrders.mockReturnValueOnce(response.promise)
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    const signal = previewOrders.mock.calls[0]![1]
+    await user.click(screen.getByRole('button', { name: 'Release ' + reserveId }))
+    const reason = screen.getByLabelText('Release reason')
+    await user.click(reason)
+    const snapshot = reservationSnapshot(reserved)
+    await resolve(response, { snapshot, preview: createOrderSyncPreview(snapshot, source) })
+    expect(screen.queryByRole('region', { name: 'Review order synchronization' })).not.toBeInTheDocument()
+    expect(signal?.aborted).toBe(true)
+    expect(reason).toHaveFocus()
+  })
+
+  it('recovers from preview errors only on an explicit retry and cancels on unmount', async () => {
+    const { user, previewOrders, execute, unmount } = setup(createReservationState())
+    previewOrders.mockRejectedValueOnce(new ReservationClientError('connection', 'Preview service unavailable.'))
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    expect(screen.getByRole('heading', { name: 'Order review unavailable' })).toBeVisible()
+    expect(execute).not.toHaveBeenCalled()
+    const response = deferred<Awaited<ReturnType<ReservationClient['previewOrders']>>>()
+    previewOrders.mockReturnValueOnce(response.promise)
+    await user.click(screen.getByRole('button', { name: 'Review latest saved orders' }))
+    const signal = previewOrders.mock.calls.at(-1)![1]
+    unmount(); expect(signal?.aborted).toBe(true)
+    const snapshot = reservationSnapshot(createReservationState())
+    await resolve(response, { snapshot, preview: createOrderSyncPreview(snapshot, source) })
+  })
+
+  it('paginates review changes, resets pagination on filter, and preserves the selected order URL', async () => {
+    const { user } = setup(createReservationState())
+    let large = source
+    for (let index = 0; index < 12; index++) large = createOrder(large, 'PO-' + String(7000 + index), 'assembly', 'LOT-55')
+    localStorage.setItem(collectionKey, JSON.stringify(large))
+    await connect(user)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    const review = screen.getByRole('region', { name: 'Review order synchronization' })
+    expect(within(review).getByText(/Page 1 of 3/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Next changes' }))
+    expect(within(review).getByText(/Page 2 of 3/)).toBeVisible()
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Find changed order' }), { target: { value: 'PO-7000' } })
+    expect(within(review).getByText(/1 matching changes · Page 1 of 1/)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Previous changes' })).toBeDisabled()
+    expect(screen.getByLabelText('Current address')).toHaveTextContent('order=PO-8842&source=unit-proof')
   })
 
   it('supports keyboard cancellation with restored focus and a focused release reason before committing', async () => {

@@ -35,6 +35,8 @@ async function connect(page: Page) {
 async function connectAndSync(page: Page) {
   await connect(page)
   await page.getByRole('button', { name: 'Sync saved orders', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Review order synchronization', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm order sync', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Select order PO-8842', exact: true })).toBeVisible()
 }
 async function draft(page: Page, quantity: string, note: string) {

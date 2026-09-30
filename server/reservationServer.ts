@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ReservationStore, ReservationStoreError } from './reservationStore'
 import { SQLiteReservationStore } from './sqliteReservationStore'
 import { ReservationError } from '../src/execution/materials/reservations'
+import { createOrderSyncPreview } from '../src/execution/materials/orderSyncPreview'
 
 export interface ReservationServerOptions { directory: string; port?: number; frontendPort?: number; storage?: 'sqlite' | 'json' }
 export interface ReservationServer { origin: string; port: number; close: () => Promise<void> }
@@ -66,17 +67,29 @@ export async function startReservationServer(options: ReservationServerOptions):
         throw new HttpError(403, 'request_not_allowed', 'This service accepts requests only from its configured local FactoryOS application.')
       }
       response.setHeader('Access-Control-Allow-Origin', origin); response.setHeader('Vary', 'Origin')
-      if (request.url !== '/api/reservations') throw new HttpError(404, 'not_found', 'This material-service route was not found.')
+      const isPreview = request.url === '/api/reservations/order-sync-preview'
+      if (request.url !== '/api/reservations' && !isPreview) throw new HttpError(404, 'not_found', 'This material-service route was not found.')
+      const methods = isPreview ? ['POST'] : ['GET', 'POST']
       if (request.method === 'OPTIONS') {
         const method = request.headers['access-control-request-method']
         const headers = (request.headers['access-control-request-headers'] ?? '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean)
-        if (!['GET', 'POST'].includes(method ?? '') || !headers.includes('x-factoryos-client') || headers.some(value => !['x-factoryos-client', 'content-type'].includes(value))) {
+        if (!methods.includes(method ?? '') || !headers.includes('x-factoryos-client') || headers.some(value => !['x-factoryos-client', 'content-type'].includes(value))) {
           throw new HttpError(403, 'request_not_allowed', 'This browser operation is not permitted by the local material service.')
         }
-        response.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'X-FactoryOS-Client, Content-Type', 'Access-Control-Max-Age': '300' })
+        response.writeHead(204, { 'Access-Control-Allow-Methods': methods.join(', '), 'Access-Control-Allow-Headers': 'X-FactoryOS-Client, Content-Type', 'Access-Control-Max-Age': '300' })
         response.end(); return
       }
       if (request.headers['x-factoryos-client'] !== 'reservations') throw new HttpError(403, 'request_not_allowed', 'The FactoryOS material-service header is missing or invalid.')
+      if (isPreview) {
+        if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'The order-sync preview supports POST only.')
+        const input = await body(request)
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'collection')) {
+          throw new HttpError(400, 'invalid_command', 'Send an order-sync preview containing only the full production-order collection.')
+        }
+        const snapshot = await store.snapshot()
+        const preview = createOrderSyncPreview(snapshot, (input as Record<string, unknown>)['collection'])
+        send(response, 200, { snapshot, preview }); return
+      }
       if (request.method === 'GET') { send(response, 200, await store.snapshot()); return }
       if (request.method === 'POST') { send(response, 200, await store.execute(await body(request))); return }
       throw new HttpError(405, 'method_not_allowed', 'The material service supports reading and submitting commands only.')

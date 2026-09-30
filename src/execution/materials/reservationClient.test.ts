@@ -3,6 +3,7 @@ import { seedOrderCollection } from '../order-machine/orderCollection'
 import { createReservationClient, ReservationClientError } from './reservationClient'
 import { applyReservationCommand, createReservationState, reservationSnapshot } from './reservations'
 import type { ReservationCommand } from './reservations'
+import { createOrderSyncPreview } from './orderSyncPreview'
 
 const syncId = '00000000-0000-4000-8000-000000000001'
 const holdId = '00000000-0000-4000-8000-000000000002'
@@ -144,5 +145,79 @@ describe('local reservation client protocol', () => {
     vi.spyOn(body, 'text').mockRejectedValue(abort)
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(body)
     await expect(createReservationClient(fetcher).read()).rejects.toBe(abort)
+  })
+
+  it('requests a non-mutating preview at the exact endpoint and deep-captures nested source data', async () => {
+    let finish!: (value: Response) => void
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>(resolve => { finish = resolve }))
+    const collection = structuredClone(seedOrderCollection()), original = structuredClone(collection)
+    const controller = new AbortController(), snapshot = reservationSnapshot(synced)
+    const pending = createReservationClient(fetcher).previewOrders(collection, controller.signal)
+    const first = collection.orders[0]
+    if (!first) throw new Error('Missing fixture order.')
+    first.aggregate.order.target = 777
+    finish(response({ preview: createOrderSyncPreview(snapshot, original), snapshot }))
+    await expect(pending).resolves.toEqual({ snapshot, preview: createOrderSyncPreview(snapshot, original) })
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4404/api/reservations/order-sync-preview', {
+      method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
+      headers: { 'X-FactoryOS-Client': 'reservations', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ collection: original }), signal: controller.signal,
+    })
+    expect(synced.revision).toBe(1); expect(synced.receipts).toHaveLength(1)
+  })
+
+  it.each(['count', 'stale-revision', 'missing-change', 'extra-property', 'malformed-snapshot'])('rejects a misleading %s preview response', async issue => {
+    const snapshot = reservationSnapshot(createReservationState()), collection = seedOrderCollection()
+    const preview = createOrderSyncPreview(snapshot, collection)
+    const value = issue === 'count' ? { snapshot, preview: { ...preview, added: 0 } }
+      : issue === 'stale-revision' ? { snapshot, preview: { ...preview, revision: 9 } }
+        : issue === 'missing-change' ? { snapshot, preview: { ...preview, changes: preview.changes.slice(1) } }
+          : issue === 'extra-property' ? { snapshot, preview: { ...preview, approved: true } }
+            : { snapshot: { ...snapshot, revision: 1 }, preview }
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(value))
+    await expect(createReservationClient(fetcher).previewOrders(collection)).rejects.toMatchObject({ code: 'invalid_response' })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a preview of caller edits made after sending rather than accepting the changed intent', async () => {
+    let finish!: (value: Response) => void
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>(resolve => { finish = resolve }))
+    const collection = structuredClone(seedOrderCollection()), snapshot = reservationSnapshot(synced)
+    const pending = createReservationClient(fetcher).previewOrders(collection)
+    const first = collection.orders[0]
+    if (!first) throw new Error('Missing fixture order.')
+    first.aggregate.order.target = 777
+    finish(response({ snapshot, preview: createOrderSyncPreview(snapshot, collection) }))
+    await expect(pending).rejects.toMatchObject({ code: 'invalid_response' })
+  })
+
+  it('rejects malformed source capture and unverified response envelopes without submitting a sync', async () => {
+    const cyclic: Record<string, unknown> = {}; cyclic['self'] = cyclic
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ snapshot: reservationSnapshot(synced) }))
+    const client = createReservationClient(fetcher)
+    await expect(client.previewOrders(cyclic)).rejects.toMatchObject({ code: 'invalid_source' })
+    await expect(client.previewOrders(undefined)).rejects.toMatchObject({ code: 'invalid_source' })
+    expect(fetcher).not.toHaveBeenCalled()
+    await expect(client.previewOrders(seedOrderCollection())).rejects.toMatchObject({ code: 'invalid_response' })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces safe preview errors without automatic retries or commands', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response({ error: { code: 'invalid_command', message: 'Repair the source collection.' } }, 400))
+      .mockRejectedValueOnce(new Error('private raw network detail'))
+    const client = createReservationClient(fetcher)
+    await expect(client.previewOrders(seedOrderCollection())).rejects.toEqual(new ReservationClientError('invalid_command', 'Repair the source collection.'))
+    await expect(client.previewOrders(seedOrderCollection())).rejects.toMatchObject({ code: 'connection' })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls.every(([url]) => url === 'http://127.0.0.1:4404/api/reservations/order-sync-preview')).toBe(true)
+  })
+
+  it.each(['fetch', 'body'])('preserves cancellation during preview %s', async stage => {
+    const abort = new DOMException('Preview cancelled', 'AbortError')
+    const result = response({ snapshot: reservationSnapshot(synced), preview: createOrderSyncPreview(reservationSnapshot(synced), seedOrderCollection()) })
+    const fetcher = vi.fn<typeof fetch>()
+    if (stage === 'fetch') fetcher.mockRejectedValue(abort)
+    else { vi.spyOn(result, 'text').mockRejectedValue(abort); fetcher.mockResolvedValue(result) }
+    await expect(createReservationClient(fetcher).previewOrders(seedOrderCollection())).rejects.toBe(abort)
   })
 })

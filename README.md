@@ -18,3 +18,5 @@ An optional local Node service stores material holds, revision conflict state an
 See [the material reservation runbook](docs/material-reservations.md) for startup commands, persistence and recovery limits, workflow behavior and the next backend phases. `npm run check` validates the browser and server; `npm run test:e2e` includes real-service Chromium journeys.
 
 See [the explicit SQLite migration procedure](docs/sqlite-reservation-migration.md) before upgrading an existing ledger, and [the SQLite phase validation report](docs/sqlite-reservations-validation.md) for measured results and remaining limits.
+
+Order synchronization now has a [read-only change review](docs/order-sync-review.md), removal acknowledgment and stale-source protection before explicit confirmation. This does not move browser order ownership to the service. See [the order review validation report](docs/order-sync-review-validation.md) for current checks and visual evidence.

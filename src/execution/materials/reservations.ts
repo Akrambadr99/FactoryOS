@@ -124,7 +124,7 @@ function parseOrders(value: unknown): ReservationOrder[] {
   unique(orders.map(order => order.id))
   return orders.toSorted((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
-function importedOrders(value: unknown): ReservationOrder[] {
+export function reservationOrdersFromCollection(value: unknown): ReservationOrder[] {
   try {
     const collection = orderCollectionRule(value)
     if (collection.orders.length > MAX_ORDERS || collection.lotIndexes.length > MAX_ORDERS || collection.events.length > 10000) invalid()
@@ -143,7 +143,7 @@ function normalizeCommand(value: unknown, fromReceipt = false): NormalizedComman
   switch (item['kind']) {
     case 'sync-orders':
       keys(item, ['kind', 'requestId', 'expectedRevision', fromReceipt ? 'orders' : 'collection'])
-      return { kind: 'sync-orders', ...base, orders: fromReceipt ? parseOrders(item['orders']) : importedOrders(item['collection']) }
+      return { kind: 'sync-orders', ...base, orders: fromReceipt ? parseOrders(item['orders']) : reservationOrdersFromCollection(item['collection']) }
     case 'reserve':
       keys(item, ['kind', 'requestId', 'expectedRevision', 'orderId', 'lotId', 'quantity', 'note'])
       return { kind: 'reserve', ...base, orderId: text(item['orderId']), lotId: text(item['lotId']),
