@@ -1,0 +1,13 @@
+.suite-page.workflow-recovery { max-width: 48rem; margin: clamp(1rem, 7vh, 5rem) auto; padding: clamp(1rem, 4vw, 2.5rem); }
+.workflow-recovery header { display: block; height: auto; padding: 0; background: transparent; border: 0; margin-bottom: 2.5rem; }
+.workflow-recovery h1 { max-width: 24ch; line-height: 1.16; font-size: clamp(1.8rem, 4vw, 2.6rem); }
+.workflow-recovery h1:focus-visible { outline: 3px solid var(--accent, #1659ac); outline-offset: 8px; }
+.workflow-recovery p { line-height: 1.65; overflow-wrap: anywhere; }
+.workflow-recovery section { border-top: 1px solid #aeb9c7; padding-top: 1.5rem; }
+.workflow-recovery h2 { font-size: 1.2rem; }
+.recovery-context { font-size: .875rem; letter-spacing: .02em; }
+.recovery-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1rem; margin-top: 1.5rem; }
+.recovery-actions button, .recovery-actions a { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.recovery-actions a { text-decoration: underline; text-underline-offset: .2em; }
+.recovery-actions :focus-visible { outline: 3px solid var(--accent, #1659ac); outline-offset: 3px; }
+@media (max-width: 480px) { .recovery-actions { align-items: stretch; flex-direction: column; } .recovery-actions > * { width: 100%; } }

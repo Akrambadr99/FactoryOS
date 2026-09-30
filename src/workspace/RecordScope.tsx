@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { StoragePort } from './repository'
+import { StoredDataError } from './storageValidation'
 
 const Context = createContext<{ storage: StoragePort; recordId: string; guard: <T extends unknown[]>(action: (...args: T) => void) => (...args: T) => void } | null>(null)
 export function useRecordContext() {
@@ -22,7 +23,10 @@ function RecordSession({ id, back, open, reload, children, restoreFocus }: {
 }) {
   const [session] = useState(() => {
     try { return { storage: open(id), error: '' } }
-    catch (error) { return { storage: null, error: error instanceof Error ? error.message : 'Unable to open this record. Retry or return to the workspace.' } }
+    catch (error) {
+      if (error instanceof StoredDataError) throw error
+      return { storage: null, error: error instanceof Error ? error.message : 'Unable to open this record. Retry or return to the workspace.' }
+    }
   })
   const [failure, setFailure] = useState('')
   const contextRef = useRef<HTMLElement>(null)

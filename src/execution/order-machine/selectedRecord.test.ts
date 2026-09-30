@@ -83,7 +83,7 @@ describe('selected order persistence', () => {
     const storage = new MemoryStorage(), bound = openSelectedRecord(storage)
     const changed = edit(readOrderAggregate(bound))
     storage.fail = true
-    expect(() => saveOrderAggregate(bound, changed)).toThrow('Storage full')
+    expect(() => saveOrderAggregate(bound, changed)).toThrow('Browser storage rejected the save')
     storage.fail = false
     saveOrderAggregate(bound, changed)
     expect(readOrderAggregate(openSelectedRecord(storage))).toEqual(changed)

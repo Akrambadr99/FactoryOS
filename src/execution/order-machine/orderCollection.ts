@@ -1,3 +1,5 @@
+import { readStored, writeStored } from '../../workspace/storageValidation'
+import { orderCollectionRule } from './collectionValidation'
 import type { StoragePort } from '../../workspace/repository'
 import { initialOrderAggregate, readOrderAggregate, retryRecall } from './orderLedger'
 import type { OrderAggregate, RecallActor } from './orderLedger'
@@ -62,17 +64,10 @@ export function seedOrderCollection(legacy: OrderAggregate = initialOrderAggrega
   ], events: [] }
 }
 export function readOrderCollection(storage: StoragePort): OrderCollection {
-  const raw = storage.getItem(collectionKey)
-  if (!raw) return seedOrderCollection(readOrderAggregate(storage))
-  const value: unknown = JSON.parse(raw)
-  if (!value || typeof value !== 'object' || !('orders' in value) || !Array.isArray(value.orders) ||
-    !('lotIndexes' in value) || !Array.isArray(value.lotIndexes) || !('events' in value) || !Array.isArray(value.events))
-    throw new Error('Invalid production-order collection.')
-  return value as OrderCollection
+  return readStored(storage, collectionKey, orderCollectionRule, () => seedOrderCollection(readOrderAggregate(storage)), 'factoryos:order:PO-8842:v1')
 }
-export function saveOrderCollection(storage: StoragePort, collection: OrderCollection): OrderCollection {
-  storage.setItem(collectionKey, JSON.stringify(collection))
-  return collection
+export function saveOrderCollection(storage: StoragePort, value: OrderCollection): OrderCollection {
+  return writeStored(storage, collectionKey, orderCollectionRule, value)
 }
 export function getOrder(collection: OrderCollection, id: string): ProductionOrderRecord {
   const record = collection.orders.find(item => item.id === id)
