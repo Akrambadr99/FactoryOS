@@ -6,6 +6,7 @@ import { readOrderAggregate } from './orderLedger'
 export function openSelectedRecord(storage: StoragePort, id = 'PO-8842') {
   return bindRecord(storage, id, {
     key: 'factoryos:order:PO-8842:v1',
+    collectionKey: 'factoryos:production-orders:v1',
     read: readOrderCollection, save: saveOrderCollection,
     find: (collection, target) => collection.orders.find(item => item.id === target),
     value: record => record.aggregate, archived: record => record.archived,

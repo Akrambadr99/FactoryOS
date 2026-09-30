@@ -14,6 +14,15 @@ class MemoryStorage implements StoragePort {
 const edit: (state: ReturnType<typeof readOrderAggregate>) => ReturnType<typeof readOrderAggregate> = state => executeOrder(state, { type: 'release-material' })
 const key = 'factoryos:order:PO-8842:v1'
 describe('selected order persistence', () => {
+  it('preserves the primary migration source when a secondary record opens first', () => {
+    const storage = new MemoryStorage()
+    const before = readOrderCollection(storage)
+    const peer = before.orders[1]
+    if (!peer) throw new Error('Secondary fixture missing')
+    const bound = openSelectedRecord(storage, peer.id)
+    expect(readOrderCollection(bound)).toEqual(before)
+    expect(storage.data.size).toBe(0)
+  })
   it('imports legacy history once and retains its original backup', () => {
     const storage = new MemoryStorage()
     const legacy = edit(readOrderAggregate(storage))

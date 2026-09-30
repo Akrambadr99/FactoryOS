@@ -2,6 +2,7 @@ import type { StoragePort } from './repository'
 
 export interface RecordBinding<C, R> {
   key: string
+  collectionKey: string
   read: (storage: StoragePort) => C
   save: (storage: StoragePort, collection: C) => C
   find: (collection: C, id: string) => R | undefined
@@ -19,7 +20,10 @@ export function bindRecord<C, R>(storage: StoragePort, id: string, binding: Reco
   let snapshot = JSON.stringify(binding.value(initial))
   return {
     getItem(key) {
-      return key === binding.key ? snapshot : storage.getItem(key)
+      if (key === binding.key) return snapshot
+      // Keep first-open collection reads rooted in the original legacy source.
+      if (key === binding.collectionKey) return storage.getItem(key) ?? JSON.stringify(binding.read(storage))
+      return storage.getItem(key)
     },
     setItem(key, raw) {
       if (key !== binding.key) { storage.setItem(key, raw); return }

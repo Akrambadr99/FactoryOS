@@ -22,7 +22,7 @@ test('secondary record selection and return navigation work at tablet width', as
   await page.getByRole('link', { name: 'Open record details' }).click()
   await expect(page.getByLabel('Selected record context')).toContainText('PO-8843')
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+  await expect.poll(() => page.evaluate<number>('window.scrollY')).toBe(0)
   await page.screenshot({ path: '../UI_SCREENSHOTS/fifteenth-FactoryOS-detail.png', fullPage: true })
   await page.reload()
   await expect(page.getByLabel('Selected record context')).toContainText('PO-8843')
