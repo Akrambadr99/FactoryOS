@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import path from 'node:path'
-import { applyReservationCommand, createReservationState, reservationSnapshot, validateReservationState } from '../src/execution/materials/reservations'
+import { applyReservationCommand, applyReservationReleaseBatch, createReservationState, reservationSnapshot, validateReservationState } from '../src/execution/materials/reservations'
 
 export class ReservationStoreError extends Error {
   readonly code: string
@@ -110,6 +110,13 @@ export class ReservationStore {
   execute(command: unknown) {
     return this.serialized(async () => {
       const result = applyReservationCommand(await this.read(), command)
+      if (!result.replayed) await this.publish(result.state)
+      return { snapshot: result.snapshot, replayed: result.replayed }
+    })
+  }
+  releaseBatch(value: unknown) {
+    return this.serialized(async () => {
+      const result = applyReservationReleaseBatch(await this.read(), value)
       if (!result.replayed) await this.publish(result.state)
       return { snapshot: result.snapshot, replayed: result.replayed }
     })

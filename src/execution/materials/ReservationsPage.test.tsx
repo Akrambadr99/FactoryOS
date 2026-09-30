@@ -6,7 +6,7 @@ import { createOrder, seedOrderCollection } from '../order-machine/orderCollecti
 import { ReservationsPage } from './ReservationsPage'
 import { ReservationClientError, type ReservationClient } from './reservationClient'
 import { createOrderSyncPreview } from './orderSyncPreview'
-import { applyReservationCommand, createReservationState, reservationSnapshot, type ReservationState } from './reservations'
+import { applyReservationCommand, applyReservationReleaseBatch, createReservationState, reservationSnapshot, type ReservationState } from './reservations'
 
 const collectionKey = 'factoryos:production-orders:v1'
 const source = createOrder(seedOrderCollection(), 'PO-9901', 'assembly', 'LOT-55')
@@ -42,9 +42,14 @@ function setup(initial: ReservationState = synced, url = '/execution/reservation
     state = result.state
     return Promise.resolve({ snapshot: result.snapshot, replayed: result.replayed })
   })
-  const client: ReservationClient = { read, execute, previewOrders }
+  const releaseBatch = vi.fn<ReservationClient['releaseBatch']>().mockImplementation(batch => {
+    const result = applyReservationReleaseBatch(state, batch)
+    state = result.state
+    return Promise.resolve({ snapshot: result.snapshot, replayed: result.replayed })
+  })
+  const client: ReservationClient = { read, execute, previewOrders, releaseBatch }
   const mounted = render(<MemoryRouter initialEntries={[url]}><ReservationsPage client={client} /><LocationProbe /></MemoryRouter>)
-  return { ...mounted, read, execute, previewOrders, user: userEvent.setup() }
+  return { ...mounted, read, execute, previewOrders, releaseBatch, user: userEvent.setup() }
 }
 async function connect(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Connect reservation service' }))
@@ -62,6 +67,161 @@ async function reject<T>(pending: ReturnType<typeof deferred<T>>) {
   await act(async () => { pending.reject(new ReservationClientError('connection', 'Connection lost. Retry the same request.')); await Promise.resolve() })
 }
 afterEach(() => { vi.restoreAllMocks() })
+
+const batchId = (value: number) => `00000000-0000-4000-8000-${String(value).padStart(12, '0')}`
+function batchFixture() {
+  const collection = createOrder(source, 'PO-9902', 'packaging', 'LOT-76')
+  let state = applyReservationCommand(createReservationState(), { kind: 'sync-orders', requestId: syncId, expectedRevision: 0, collection }).state
+  for (const [index, orderId] of ['PO-8842', 'PO-9901', 'PO-9902'].entries()) {
+    state = applyReservationCommand(state, { kind: 'reserve', requestId: batchId(100 + index), expectedRevision: state.revision,
+      orderId, lotId: index === 2 ? 'MAT-PACK' : 'MAT-ALLOY', quantity: 5, note: `Planning hold for ${orderId}` }).state
+  }
+  return state
+}
+async function selectBatch(user: ReturnType<typeof userEvent.setup>, count = 2) {
+  await connect(user)
+  await user.click(screen.getByText('Manage active holds'))
+  for (let index = 0; index < count; index++) await user.click(screen.getByRole('checkbox', { name: 'Select hold ' + batchId(100 + index) }))
+}
+async function reviewBatch(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Review selected releases' }))
+  return screen.getByRole('dialog', { name: 'Release selected material holds' })
+}
+
+describe('selected-hold batch interaction', () => {
+  it('keeps filtered selections and captures the exact scope without saving on review or cancellation', async () => {
+    const { user, releaseBatch, execute } = setup(batchFixture())
+    await selectBatch(user)
+    await user.selectOptions(screen.getByLabelText('Hold production line'), 'packaging')
+    expect(screen.getByText('2 selected · 2 outside this view')).toBeVisible()
+    const trigger = screen.getByRole('button', { name: 'Review selected releases' })
+    const dialog = await reviewBatch(user)
+    expect(within(dialog).getByRole('heading')).toHaveFocus()
+    expect(within(dialog).getByRole('list', { name: 'Captured holds' }).children).toHaveLength(2)
+    await user.keyboard('{Tab}')
+    expect(within(dialog).getByRole('list', { name: 'Captured holds' })).toHaveFocus()
+    await user.keyboard('{Tab}')
+    expect(within(dialog).getByLabelText('Batch release reason')).toHaveFocus()
+    expect(within(dialog).getByText('PO-8842')).toBeVisible()
+    expect(within(dialog).getByText('PO-9901')).toBeVisible()
+    expect(within(dialog).queryByText('PO-9902')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Release selected holds' })).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Batch release reason'), { target: { value: 'Keep this cancellation draft' } })
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveFocus()
+    expect(releaseBatch).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled()
+    await reviewBatch(user)
+    expect(screen.getByLabelText('Batch release reason')).toHaveValue('Keep this cancellation draft')
+  })
+
+  it('requires an inline valid reason and writes the reviewed ordered holds only once', async () => {
+    const { user, releaseBatch, execute } = setup(batchFixture())
+    await selectBatch(user)
+    const dialog = await reviewBatch(user), reason = within(dialog).getByLabelText('Batch release reason')
+    await user.type(reason, 'short')
+    expect(reason).toHaveAttribute('aria-invalid', 'true')
+    expect(within(dialog).getByRole('button', { name: 'Release selected holds' })).toBeDisabled()
+    fireEvent.change(reason, { target: { value: '  Production plan changed  ' } })
+    await user.click(within(dialog).getByRole('button', { name: 'Release selected holds' }))
+    expect(releaseBatch).toHaveBeenCalledTimes(1); expect(execute).not.toHaveBeenCalled()
+    const submitted = releaseBatch.mock.calls[0]![0]
+    expect(submitted).toMatchObject({ expectedRevision: 4, reason: 'Production plan changed', releases: [
+      { reservationId: batchId(100) }, { reservationId: batchId(101) },
+    ] })
+    expect(new Set(submitted.releases.map(item => item.requestId)).size).toBe(2)
+    for (const item of submitted.releases) expect(item.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(screen.getByText('0 selected · 0 outside this view')).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: 'Select hold ' + batchId(102) })).not.toBeChecked()
+    expect(screen.getByText(/2 selected material holds released together/)).toHaveFocus()
+  })
+
+  it('retries the frozen batch after an uncertain response and preserves newer selection, drafts and focus', async () => {
+    const state = batchFixture(), { user, releaseBatch } = setup(state), pending = deferred<Result>(), retry = deferred<Result>()
+    releaseBatch.mockReturnValueOnce(pending.promise).mockReturnValueOnce(retry.promise)
+    await selectBatch(user)
+    await reviewBatch(user)
+    fireEvent.change(screen.getByLabelText('Batch release reason'), { target: { value: 'Captured reason for exact retry' } })
+    await user.click(screen.getByRole('button', { name: 'Release selected holds' }))
+    const captured = structuredClone(releaseBatch.mock.calls[0]![0]), saved = applyReservationReleaseBatch(state, captured)
+    await user.click(screen.getByRole('checkbox', { name: 'Select hold ' + batchId(102) }))
+    draft('23', 'A newer draft must remain')
+    await user.click(screen.getByLabelText('Reservation note'))
+    await reject(pending)
+    expect(screen.getByLabelText('Reservation note')).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Retry same request' }))
+    expect(releaseBatch.mock.calls[1]![0]).toEqual(captured)
+    await user.click(screen.getByLabelText('Reservation note'))
+    await resolve(retry, { snapshot: saved.snapshot, replayed: true })
+    expect(screen.getByRole('checkbox', { name: 'Select hold ' + batchId(102) })).toBeChecked()
+    expect(screen.getByText('1 selected · 0 outside this view')).toBeVisible()
+    expect(screen.getByLabelText('Reservation note')).toHaveValue('A newer draft must remain')
+    expect(screen.getByLabelText('Units to reserve')).toHaveValue(23)
+    expect(screen.getByLabelText('Reservation note')).toHaveFocus()
+    expect(screen.queryByRole('region', { name: 'Pending reservation request' })).not.toBeInTheDocument()
+  })
+
+  it('does not silently drop a selected hold released elsewhere, and requires explicit cleanup', async () => {
+    const state = batchFixture(), { user, read } = setup(state)
+    await selectBatch(user)
+    const next = applyReservationCommand(state, { kind: 'release', requestId: batchId(500), expectedRevision: state.revision,
+      reservationId: batchId(100), reason: 'Released by another planner' })
+    read.mockResolvedValueOnce(next.snapshot)
+    await user.click(screen.getByRole('button', { name: 'Refresh reservations' }))
+    expect(screen.getByText(/1 selected holds are no longer active/)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Review selected releases' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Remove unavailable selections' }))
+    expect(screen.getByText('1 selected · 0 outside this view')).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: 'Select hold ' + batchId(101) })).toBeChecked()
+    expect(screen.getByRole('button', { name: 'Review selected releases' })).toBeEnabled()
+  })
+
+  it('cannot confirm a reviewed batch against a newly loaded ledger revision', async () => {
+    const state = batchFixture(), { user, read, releaseBatch } = setup(state)
+    await selectBatch(user)
+    await reviewBatch(user)
+    fireEvent.change(screen.getByLabelText('Batch release reason'), { target: { value: 'Plan changed after review' } })
+    const next = applyReservationCommand(state, { kind: 'release', requestId: batchId(500), expectedRevision: state.revision,
+      reservationId: batchId(102), reason: 'An independent release changed the ledger' })
+    read.mockResolvedValueOnce(next.snapshot)
+    // Simulate a state refresh arriving while the decision stays open.
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh reservations' }))
+    await screen.findByText('The loaded ledger changed. Close and review selected releases again before confirming.')
+    expect(screen.getByRole('button', { name: 'Release selected holds' })).toBeDisabled()
+    expect(releaseBatch).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}')
+    await reviewBatch(user)
+    expect(screen.getByRole('button', { name: 'Release selected holds' })).toBeEnabled()
+  })
+
+  it('invalidates a late sync preview when opening the batch decision', async () => {
+    const state = batchFixture(), { user, previewOrders } = setup(state)
+    await selectBatch(user)
+    const pending = deferred<Awaited<ReturnType<ReservationClient['previewOrders']>>>()
+    previewOrders.mockReturnValueOnce(pending.promise)
+    await user.click(screen.getByRole('button', { name: 'Sync saved orders' }))
+    await reviewBatch(user)
+    const signal = previewOrders.mock.calls[0]![1]
+    expect(signal?.aborted).toBe(true)
+    await resolve(pending, { snapshot: reservationSnapshot(state), preview: createOrderSyncPreview(reservationSnapshot(state), source) })
+    expect(screen.getByRole('heading', { name: 'Release selected material holds' })).toHaveFocus()
+    expect(screen.queryByRole('region', { name: 'Order synchronization preview' })).not.toBeInTheDocument()
+  })
+
+  it('aborts batch transport on unmount without treating cancellation as a server rollback', async () => {
+    const state = batchFixture(), { user, releaseBatch, unmount } = setup(state), pending = deferred<Result>()
+    releaseBatch.mockReturnValueOnce(pending.promise)
+    await selectBatch(user)
+    await reviewBatch(user)
+    fireEvent.change(screen.getByLabelText('Batch release reason'), { target: { value: 'A captured release decision' } })
+    await user.click(screen.getByRole('button', { name: 'Release selected holds' }))
+    const [batch, signal] = releaseBatch.mock.calls[0]!
+    unmount()
+    expect(signal?.aborted).toBe(true)
+    const saved = applyReservationReleaseBatch(state, batch)
+    await resolve(pending, { snapshot: saved.snapshot, replayed: false })
+    expect(screen.queryByRole('region', { name: 'Material reservations workspace' })).not.toBeInTheDocument()
+  })
+})
 
 describe('material reservation workbench interaction', () => {
   it('reveals storage upgrade guidance without connecting or changing saved records', async () => {
@@ -486,7 +646,7 @@ describe('material reservation workbench interaction', () => {
     expect(execute.mock.calls[1]![0]).toEqual(captured)
     expect(screen.queryByRole('button', { name: 'Release ' + reserveId })).not.toBeInTheDocument()
     expect(screen.getByText('Release: Changed production plan')).toBeVisible()
-    expect(within(screen.getByRole('region', { name: 'Material reservations workspace' })).getByRole('status')).toHaveFocus()
+    expect(screen.getByText(/Saved\. Reservation released/)).toHaveFocus()
   })
 
   it('does not steal focus from a newer draft when a delayed release failure arrives', async () => {

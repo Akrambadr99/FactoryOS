@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { seedOrderCollection } from '../order-machine/orderCollection'
 import { createReservationClient, ReservationClientError } from './reservationClient'
-import { applyReservationCommand, createReservationState, reservationSnapshot } from './reservations'
-import type { ReservationCommand } from './reservations'
+import { applyReservationCommand, applyReservationReleaseBatch, createReservationState, normalizeReservationReleaseBatch, reservationSnapshot } from './reservations'
+import type { ReservationCommand, ReservationReleaseBatch } from './reservations'
 import { createOrderSyncPreview } from './orderSyncPreview'
 
 const syncId = '00000000-0000-4000-8000-000000000001'
@@ -20,6 +20,13 @@ const release = (): Extract<ReservationCommand, { kind: 'release' }> => ({
 })
 const reserved = applyReservationCommand(synced, hold()).state
 const released = applyReservationCommand(reserved, release()).state
+const secondHoldId = '00000000-0000-4000-8000-000000000004'
+const secondReleaseId = '00000000-0000-4000-8000-000000000005'
+const batchHeld = applyReservationCommand(reserved, { ...hold(), requestId: secondHoldId, expectedRevision: 2, lotId: 'MAT-FASTENER' }).state
+const batchRequest: ReservationReleaseBatch = { expectedRevision: 3, reason: 'Changed production schedule', releases: [
+  { requestId: releaseId, reservationId: holdId }, { requestId: secondReleaseId, reservationId: secondHoldId },
+] }
+const batchSaved = applyReservationReleaseBatch(batchHeld, batchRequest).state
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
 const saved = (snapshot = reservationSnapshot(reserved), replayed = false) => response({ snapshot, replayed })
 
@@ -219,5 +226,82 @@ describe('local reservation client protocol', () => {
     if (stage === 'fetch') fetcher.mockRejectedValue(abort)
     else { vi.spyOn(result, 'text').mockRejectedValue(abort); fetcher.mockResolvedValue(result) }
     await expect(createReservationClient(fetcher).previewOrders(seedOrderCollection())).rejects.toBe(abort)
+  })
+
+  it('deep-captures and canonicalizes a whole release batch before an in-flight caller edit', async () => {
+    let finish!: (value: Response) => void
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>(resolve => { finish = resolve }))
+    const batch = { ...batchRequest, reason: '  ' + batchRequest.reason + '  ', releases: batchRequest.releases.map(item => ({
+      requestId: item.requestId.toUpperCase(), reservationId: item.reservationId.toUpperCase(),
+    })) }
+    const captured = normalizeReservationReleaseBatch(batch), controller = new AbortController()
+    const pending = createReservationClient(fetcher).releaseBatch(batch, controller.signal)
+    batch.reason = 'Different reason after submission'
+    const first = batch.releases[0]
+    if (!first) throw new Error('Missing fixture release.')
+    first.reservationId = secondHoldId; first.requestId = syncId
+    finish(saved(reservationSnapshot(batchSaved)))
+    await expect(pending).resolves.toEqual({ snapshot: reservationSnapshot(batchSaved), replayed: false })
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4404/api/reservations/release-batch', {
+      method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error',
+      headers: { 'X-FactoryOS-Client': 'reservations', 'Content-Type': 'application/json' },
+      body: JSON.stringify(captured), signal: controller.signal,
+    })
+  })
+
+  it('keeps an ambiguous batch retry identical and verifies all receipts in a newer current snapshot', async () => {
+    const newer = applyReservationCommand(batchSaved, { ...sync, requestId: '00000000-0000-4000-8000-000000000099', expectedRevision: batchSaved.revision }).state
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValueOnce(new Error('private network details')).mockResolvedValueOnce(saved(reservationSnapshot(newer), true))
+    const client = createReservationClient(fetcher)
+    await expect(client.releaseBatch(batchRequest)).rejects.toMatchObject({ code: 'connection' })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await expect(client.releaseBatch(batchRequest)).resolves.toMatchObject({ replayed: true, snapshot: { revision: 6 } })
+    expect(fetcher.mock.calls[0]?.[1]?.body).toBe(fetcher.mock.calls[1]?.[1]?.body)
+  })
+
+  it('rejects a valid partial snapshot instead of treating the first acknowledgement as batch success', async () => {
+    const partial = applyReservationCommand(batchHeld, { ...release(), expectedRevision: batchRequest.expectedRevision, reason: batchRequest.reason }).state
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(saved(reservationSnapshot(partial)))
+    await expect(createReservationClient(fetcher).releaseBatch(batchRequest)).rejects.toMatchObject({ code: 'invalid_response' })
+  })
+
+  it('verifies the final item reason and ordered revision instead of only checking that every hold is released', async () => {
+    const first = applyReservationCommand(batchHeld, { ...release(), expectedRevision: batchRequest.expectedRevision, reason: batchRequest.reason }).state
+    const wrongReason = applyReservationCommand(first, { kind: 'release', requestId: secondReleaseId, expectedRevision: 4,
+      reservationId: secondHoldId, reason: 'Different second release reason' }).state
+    const wrongOrder = applyReservationReleaseBatch(batchHeld, { ...batchRequest, releases: batchRequest.releases.toReversed() }).state
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(saved(reservationSnapshot(wrongReason))).mockResolvedValueOnce(saved(reservationSnapshot(wrongOrder)))
+    const client = createReservationClient(fetcher)
+    await expect(client.releaseBatch(batchRequest)).rejects.toMatchObject({ code: 'invalid_response' })
+    await expect(client.releaseBatch(batchRequest)).rejects.toMatchObject({ code: 'invalid_response' })
+  })
+
+  it('rejects malformed batch input locally without generating requests', async () => {
+    const fetcher = vi.fn<typeof fetch>(), client = createReservationClient(fetcher)
+    for (const batch of [{ ...batchRequest, releases: [] }, { ...batchRequest, reason: 'short' },
+      { ...batchRequest, releases: [...batchRequest.releases, ...batchRequest.releases] }]) {
+      await expect(client.releaseBatch(batch)).rejects.toMatchObject({ code: 'invalid_batch' })
+    }
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it.each([null, {}, { snapshot: reservationSnapshot(batchSaved), replayed: 'yes' },
+    { snapshot: reservationSnapshot(batchSaved), replayed: true, partial: true }])('rejects an unverified batch response envelope: %j', async value => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(value))
+    await expect(createReservationClient(fetcher).releaseBatch(batchRequest)).rejects.toMatchObject({ code: 'invalid_response' })
+  })
+
+  it('preserves safe partial-receipt errors and never automatically completes or retries a batch', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ error: { code: 'idempotency_conflict', message: 'Only part of this batch has saved receipts. Refresh and review.' } }, 409))
+    await expect(createReservationClient(fetcher).releaseBatch(batchRequest)).rejects.toEqual(new ReservationClientError('idempotency_conflict', 'Only part of this batch has saved receipts. Refresh and review.'))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['fetch', 'body'])('preserves cancellation during release-batch %s', async stage => {
+    const abort = new DOMException('Batch cancelled', 'AbortError'), result = saved(reservationSnapshot(batchSaved))
+    const fetcher = vi.fn<typeof fetch>()
+    if (stage === 'fetch') fetcher.mockRejectedValue(abort)
+    else { vi.spyOn(result, 'text').mockRejectedValue(abort); fetcher.mockResolvedValue(result) }
+    await expect(createReservationClient(fetcher).releaseBatch(batchRequest)).rejects.toBe(abort)
   })
 })

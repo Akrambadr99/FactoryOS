@@ -33,17 +33,21 @@ Cancel restores focus to **Sync saved orders**. Review arrival focuses its headi
 
 Order selection, search, state filtering, sorting and pagination are stored in the URL. Unknown query parameters are preserved. Selected order details remain open outside a filtered list. Each order has its own in-memory reservation draft.
 
+**Manage active holds** opens an independent list with search, production-line filtering and eight-row pagination. Explicit selection survives filtering, pagination and in-page refresh; counts include selections outside the current view. Up to 25 holds can be reviewed and released together with a shared reason. The confirmation captures the exact ordered selection and ledger revision. Neither reviewing an order sync nor filtering a hold list releases anything. A selected hold released elsewhere stays flagged until the user explicitly removes unavailable selections. See [selected hold release](selected-hold-release.md) for the transaction and recovery contract.
+
 A submitted command captures its request identifier, expected ledger revision and values. While a request is pending, newer draft edits remain separate. Refresh does not resubmit. Retry sends the same request; a lost response followed by a retry returns the existing receipt without allocating twice. For a revision conflict, refresh, discard the pending request locally, review the current quantities and submit a new request explicitly. Discarding does not undo any server change.
 
 Drafts and pending attempts survive in-page refreshes, not navigation away, tab closure or browser reload. After reopening the page, reconnect and inspect recorded holds before submitting. A page refresh does not delete server data.
 
-Release confirmation supports keyboard focus trapping, Escape to cancel and focus restoration. If a failed release leaves focus without an enabled control, focus moves to Retry same request; a late failure does not interrupt an already focused draft. Success is announced, statuses use text, the workbench reflows at narrow widths, and motion respects reduced-motion preferences.
+Release confirmation supports keyboard focus trapping, Escape to cancel and focus restoration. If a failed release leaves focus without an enabled control, focus moves to Retry same request. Late failure or success does not interrupt an already focused draft. Success is announced; completing a batch clears only the captured selections, preserving newly selected holds. Statuses use text, the workbench reflows at narrow widths, and motion respects reduced-motion preferences.
 
 ## Persistence and request boundaries
 
 The default data directory is `.factoryos-data` and is ignored by Git. `FACTORYOS_DATA_DIR` chooses another local directory. `FACTORYOS_PORT` changes the API port for diagnostics; the shipped browser client uses port 4404, so keep the default for normal use. Do not expose this service through a public tunnel or reverse proxy.
 
 An exclusive process lock prevents two service processes from owning the same ledger. Operations are serialized. SQLite schema version 1 stores orders, lots, reservations, events, receipts and migration metadata separately, with constrained columns and an active order/lot uniqueness index. A command checks state and commits its changes, revision and receipt together in an immediate transaction. The service uses rollback journaling and full synchronization. A failed transaction does not acknowledge success or keep a partial command. No cross-platform power-loss durability, replication or backup guarantee is claimed.
+
+A release batch uses one immediate transaction for every selected hold, event, receipt and the final revision. It retains existing per-release records, not a new batch schema. A complete matching receipt set confirms an exact retry; a partial or mismatched set is rejected without releasing remaining items. The legacy JSON adapter publishes the final state once. No migration is required for this feature.
 
 Opening checks the application identifier, schema version and expected schema. Reads validate SQLite integrity, record relationships, stock balances, event references and the full receipt replay. Corrupt data is preserved and rejected rather than silently replaced with seed data. Successful idempotent replay returns the current ledger, not an obsolete snapshot. Migration retains the exact original JSON bytes and records their checksum in the same transaction as the imported state; both files must be retained together afterward.
 

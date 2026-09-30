@@ -14,7 +14,9 @@ export function FocusDialog({ title, onClose, children }: { title: string; onClo
     const keyboard = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close.current(); return }
       if (event.key !== 'Tab') return
-      const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]') ?? [])
+      // Keep mixed control types in document order, including scrollable lists.
+      const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('*') ?? [])
+        .filter(control => control.matches('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]'))
       const first = controls[0], last = controls.at(-1)
       if (!first || !last) { event.preventDefault(); heading.current?.focus(); return }
       const active = document.activeElement

@@ -224,6 +224,7 @@ export class SQLiteReservationStore {
   }
   snapshot() { return this.serialized(database => reservationSnapshot(database.readState())) }
   execute(command: unknown) { return this.serialized(database => database.execute(command)) }
+  releaseBatch(value: unknown) { return this.serialized(database => database.releaseBatch(value)) }
   async close(): Promise<void> {
     this.closing = true
     await this.queue

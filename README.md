@@ -19,4 +19,6 @@ See [the material reservation runbook](docs/material-reservations.md) for startu
 
 See [the explicit SQLite migration procedure](docs/sqlite-reservation-migration.md) before upgrading an existing ledger, and [the SQLite phase validation report](docs/sqlite-reservations-validation.md) for measured results and remaining limits.
 
-Order synchronization now has a [read-only change review](docs/order-sync-review.md), removal acknowledgment and stale-source protection before explicit confirmation. This does not move browser order ownership to the service. See [the order review validation report](docs/order-sync-review-validation.md) for current checks and visual evidence.
+Order synchronization has a [read-only change review](docs/order-sync-review.md), removal acknowledgment and stale-source protection before explicit confirmation. This does not move browser order ownership to the service.
+
+[Selected hold release](docs/selected-hold-release.md) lets planners review and release up to 25 explicitly chosen holds in one transaction, with a shared reason, preserved selection and exact retries. It never releases sync blockers automatically. See [the batch release validation report](docs/selected-hold-release-validation.md) for current checks and visual evidence; the [order review report](docs/order-sync-review-validation.md) retains the previous phase's results.

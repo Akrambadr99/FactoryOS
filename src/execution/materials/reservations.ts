@@ -53,6 +53,11 @@ export type ReservationCommand = CommandBase & (
   | { kind: 'reserve'; orderId: string; lotId: string; quantity: number; note: string }
   | { kind: 'release'; reservationId: string; reason: string }
 )
+export interface ReservationReleaseBatch {
+  expectedRevision: number
+  reason: string
+  releases: readonly { requestId: string; reservationId: string }[]
+}
 type NormalizedCommand = Exclude<ReservationCommand, { kind: 'sync-orders' }> | (
   CommandBase & { kind: 'sync-orders'; orders: readonly ReservationOrder[] }
 )
@@ -332,5 +337,48 @@ export function applyReservationCommand(state: ReservationState, value: unknown)
     return { state: current, snapshot: reservationSnapshot(current), replayed: true }
   }
   const next = execute(current, command)
+  return { state: next, snapshot: reservationSnapshot(next), replayed: false }
+}
+
+/** Capture one ordered release intent without adding a new persisted command kind. */
+export function normalizeReservationReleaseBatch(value: unknown): ReservationReleaseBatch {
+  const input = record(value)
+  keys(input, ['expectedRevision', 'reason', 'releases'])
+  const expectedRevision = integer(input['expectedRevision'])
+  const reason = text(input['reason'], 8, 240, true)
+  const releases = Array.from(list(input['releases'], 25)).map(value => {
+    const item = record(value)
+    keys(item, ['requestId', 'reservationId'])
+    return { requestId: uuid(item['requestId']), reservationId: uuid(item['reservationId']) }
+  })
+  if (!releases.length) invalid()
+  integer(expectedRevision + releases.length)
+  unique(releases.map(item => item.requestId)); unique(releases.map(item => item.reservationId))
+  return { expectedRevision, reason, releases }
+}
+
+/** Validate every item first, then return all release changes or none. The store
+ * must persist the returned state once, inside its existing atomic transaction. */
+export function applyReservationReleaseBatch(state: ReservationState, value: unknown): {
+  state: ReservationState; snapshot: ReservationSnapshot; replayed: boolean
+} {
+  const current = validateReservationState(state)
+  const batch = normalizeReservationReleaseBatch(value)
+  const commands = batch.releases.map((item, index) => normalizeCommand({ kind: 'release',
+    requestId: item.requestId, expectedRevision: batch.expectedRevision + index, reservationId: item.reservationId, reason: batch.reason }))
+  const receipts = new Map(current.receipts.map(receipt => [receipt.requestId, receipt]))
+  let matching = 0
+  for (const command of commands) {
+    const receipt = receipts.get(command.requestId)
+    if (!receipt) continue
+    if (receipt.fingerprint !== JSON.stringify(command)) fail('idempotency_conflict',
+      'A release request identifier belongs to different captured values. No batch changes were saved; refresh and review before starting a new batch.')
+    matching++
+  }
+  if (matching === commands.length) return { state: current, snapshot: reservationSnapshot(current), replayed: true }
+  if (matching > 0) fail('idempotency_conflict',
+    'Only part of this release batch already has saved receipts. No remaining items were released; refresh and review the recorded outcomes before starting a new batch.')
+  let next = current
+  for (const command of commands) next = execute(next, command)
   return { state: next, snapshot: reservationSnapshot(next), replayed: false }
 }

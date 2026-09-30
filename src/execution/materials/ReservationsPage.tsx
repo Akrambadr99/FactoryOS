@@ -6,12 +6,13 @@ import { readOrderCollection } from '../order-machine/orderCollection'
 import type { OrderCollection } from '../order-machine/orderCollection'
 import { createReservationClient, ReservationClientError, type ReservationClient } from './reservationClient'
 import { OrderSyncReview } from './OrderSyncReview'
+import { ActiveHoldManager } from './ActiveHoldManager'
 import type { OrderSyncPreview } from './orderSyncPreview'
-import type { MaterialReservation, ReservationCommand, ReservationOrder, ReservationSnapshot } from './reservations'
+import type { MaterialReservation, ReservationCommand, ReservationOrder, ReservationSnapshot, ReservationReleaseBatch } from './reservations'
 import './reservations.css'
 
 interface Draft { lotId: string; quantity: string; note: string }
-interface Pending { command: ReservationCommand; summary: string }
+type Pending = { command: ReservationCommand; summary: string } | { batch: ReservationReleaseBatch; summary: string }
 interface SyncReview { collection: OrderCollection; sourceFingerprint: string; preview: OrderSyncPreview; stale: boolean; focusOnOpen: boolean }
 function eligible(order: ReservationOrder) { return !order.archived && ['material-hold', 'ready'].includes(order.phase) }
 function errorMessage(error: unknown) {
@@ -31,6 +32,9 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
   const [pending, setPending] = useState<Pending | null>(null)
   const [release, setRelease] = useState<MaterialReservation | null>(null)
   const [reason, setReason] = useState('')
+  const [releaseSelection, setReleaseSelection] = useState<readonly string[]>([])
+  const [batchReview, setBatchReview] = useState<{ revision: number; holds: readonly MaterialReservation[] } | null>(null)
+  const [batchReason, setBatchReason] = useState('')
   const [syncReview, setSyncReview] = useState<SyncReview | null>(null)
   const [previewing, setPreviewing] = useState(false), [reviewFailed, setReviewFailed] = useState(false)
   const reviewRef = useRef<SyncReview | null>(null), reviewVersion = useRef(0)
@@ -67,7 +71,13 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
     if (saving) return
     if (focusSync.current) { focusSync.current = false; syncControl.current?.focus() }
     else if (focusRetry.current) { focusRetry.current = false; retryControl.current?.focus() }
-    else if (focusFeedback.current) { focusFeedback.current = false; feedback.current?.focus() }
+    else if (focusFeedback.current) {
+      focusFeedback.current = false
+      const activeElement = document.activeElement
+      // Recover focus after removed/disabled decision controls, without stealing
+      // it from a newer draft or selection edited while this request was pending.
+      if (activeElement === document.body || (activeElement instanceof HTMLButtonElement && activeElement.disabled)) feedback.current?.focus()
+    }
   }, [error, notice, saving, previewing])
 
   function view(changes: Record<string, string>, replace = false) {
@@ -100,11 +110,15 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
     readVersion.current++; readAbort.current?.abort(); setLoading(false)
     setSaving(true); setError(''); setNotice('')
     try {
-      const result = await client.execute(attempt.command, controller.signal)
+      const result = 'batch' in attempt ? await client.releaseBatch(attempt.batch, controller.signal) : await client.execute(attempt.command, controller.signal)
       if (version !== writeVersion.current) return
       readVersion.current++; readAbort.current?.abort(); setLoading(false)
       accept(result.snapshot); pendingRef.current = null; setPending(null)
-      if (attempt.command.kind === 'release' || attempt.command.kind === 'sync-orders') focusFeedback.current = true
+      if ('batch' in attempt) {
+        const completed = new Set(attempt.batch.releases.map(item => item.reservationId))
+        setReleaseSelection(current => current.filter(id => !completed.has(id)))
+      }
+      if ('batch' in attempt || attempt.command.kind === 'release' || attempt.command.kind === 'sync-orders') focusFeedback.current = true
       setNotice((result.replayed ? 'Existing receipt confirmed. ' : 'Saved. ') + attempt.summary + ' Browser order records were not changed.')
     } catch (error) {
       if (version === writeVersion.current) {
@@ -112,7 +126,7 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
         const activeElement = document.activeElement
         // The closed release dialog cannot restore a disabled trigger. Recover
         // keyboard focus, but do not interrupt someone already editing a draft.
-        if ((attempt.command.kind === 'release' || attempt.command.kind === 'sync-orders') && (activeElement === document.body ||
+        if (('batch' in attempt || attempt.command.kind === 'release' || attempt.command.kind === 'sync-orders') && (activeElement === document.body ||
           (activeElement instanceof HTMLButtonElement && activeElement.disabled))) focusRetry.current = true
       }
     }
@@ -122,6 +136,22 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
     if (pendingRef.current) return
     invalidateReview()
     const attempt = { command, summary }; pendingRef.current = attempt; setPending(attempt); void submit(attempt)
+  }
+  function reviewBatch() {
+    const current = ledgerRef.current
+    if (!current || pendingRef.current || !releaseSelection.length || releaseSelection.length > 25) return
+    const selectedHolds = releaseSelection.map(id => current.reservations.find(hold => hold.id === id && hold.status === 'active'))
+    if (selectedHolds.some(hold => !hold)) { setError('Some selected holds are no longer active. Review the selection before releasing.'); return }
+    invalidateReview(); readVersion.current++; readAbort.current?.abort(); setLoading(false)
+    setError(''); setBatchReview({ revision: current.revision, holds: selectedHolds.filter((hold): hold is MaterialReservation => Boolean(hold)).map(hold => ({ ...hold })) })
+  }
+  function confirmBatch() {
+    if (!batchReview || pendingRef.current || batchReason.trim().length < 8 || batchReason.trim().length > 240) return
+    if (ledgerRef.current?.revision !== batchReview.revision) { setError('The loaded ledger changed. Close the decision and review selected releases again.'); return }
+    const batch: ReservationReleaseBatch = { expectedRevision: batchReview.revision, reason: batchReason.trim(),
+      releases: batchReview.holds.map(hold => ({ requestId: crypto.randomUUID(), reservationId: hold.id })) }
+    const attempt = { batch, summary: `${String(batch.releases.length)} selected material holds released together.` }
+    invalidateReview(); setBatchReview(null); pendingRef.current = attempt; setPending(attempt); void submit(attempt)
   }
   function invalidateReview() {
     reviewVersion.current++; reviewAbort.current?.abort()
@@ -211,10 +241,14 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
       <p>A retry sends the same captured values and revision. A lost response may mean it already saved. For a revision conflict, refresh, discard this request, then review and submit again explicitly.</p>
       <div className="reservation-actions"><button type="button" ref={retryControl} disabled={saving} onClick={() => { void submit(pending) }}>Retry same request</button><button type="button" disabled={saving} onClick={() => {
         pendingRef.current = null; setPending(null); setError(''); setNotice('Pending request discarded locally. Any saved server change remains; refresh before making another reservation.')
-      }}>Discard pending request</button></div><details><summary>Captured request</summary><p>{pending.command.kind} · Expected revision {pending.command.expectedRevision} · {pending.command.requestId}</p></details>
+      }}>Discard pending request</button></div><details><summary>Captured request</summary>{'batch' in pending ? <>
+        <p>Release batch · Expected revision {pending.batch.expectedRevision} · {pending.batch.releases.length} holds</p><p>Reason: {pending.batch.reason}</p>
+        <ul>{pending.batch.releases.map(item => <li key={item.requestId}>{item.reservationId} · Request {item.requestId}</li>)}</ul>
+      </> : <p>{pending.command.kind} · Expected revision {pending.command.expectedRevision} · {pending.command.requestId}</p>}</details>
     </section>}
     {ledger && <>
       <dl className="reservation-metrics"><div><dt>Synced orders</dt><dd>{ledger.orders.length}</dd></div><div><dt>Eligible to reserve</dt><dd>{ledger.orders.filter(eligible).length}</dd></div><div><dt>Active holds</dt><dd>{active.length}</dd></div><div><dt>Recorded changes</dt><dd>{ledger.events.length}</dd></div></dl>
+      <ActiveHoldManager snapshot={ledger} selection={releaseSelection} onSelection={setReleaseSelection} onReview={reviewBatch} pending={saving || Boolean(pending)} />
       {!ledger.orders.length && <section className="reservation-empty"><h2>Bring your saved orders into view</h2><p>Use Sync saved orders to review the current browser collection, then confirm explicitly. No order is imported automatically. Demo stock is separate from the genealogy indexes used by existing workflows.</p></section>}
       <div className="reservation-layout"><section className="reservation-master" aria-label="Synced orders"><h2>Production orders</h2>
         <label>Find order<input type="search" value={query} onChange={event => { view({ q: event.target.value, page: '' }, true) }} /></label>
@@ -247,6 +281,19 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
       </> : <div className="reservation-empty"><h2>{selectedId ? 'Order is not in this ledger' : 'Select an order'}</h2><p>{selectedId ? 'Sync saved orders or choose a synced order. Your URL selection has been kept.' : 'Choose a production order to review available stock and reservation history.'}</p></div>}</section></div>
       <details className="reservation-audit"><summary>Ledger activity · {ledger.events.length} changes</summary><ol>{ledger.events.toReversed().slice(0, 30).map(event => <li key={event.sequence}><span>r{event.sequence}</span> {event.summary}</li>)}</ol><p>Showing the latest 30 changes. The service retains the bounded ledger history.</p></details>
     </>}
+    {batchReview && <FocusDialog title="Release selected material holds" onClose={() => { setBatchReview(null) }}>
+      <p>Release all units in these {batchReview.holds.length} captured holds together? Either every release is saved or none is. The holds and their history remain recorded.</p>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- This labelled overflow container needs keyboard focus for scrolling; Chromium covers its full 25-row capture. */}
+      <ul className="release-batch-capture" aria-label="Captured holds" tabIndex={0}>{batchReview.holds.map(hold => <li key={hold.id}><strong>{hold.orderId}</strong><span>{hold.lotId} · {hold.quantity} units</span></li>)}</ul>
+      <p>Reviewed ledger revision {batchReview.revision}. Another service change may cause a conflict; it will not be silently rebased.</p>
+      {ledger?.revision !== batchReview.revision && <p role="alert">The loaded ledger changed. Close and review selected releases again before confirming.</p>}
+      <form onSubmit={event => { event.preventDefault(); confirmBatch() }}><label>Batch release reason<textarea rows={3} maxLength={240} value={batchReason}
+        aria-invalid={Boolean(batchReason) && batchReason.trim().length < 8} aria-describedby="batch-release-help" onChange={event => { setBatchReason(event.target.value) }} /></label>
+        <p id="batch-release-help">Give a shared reason, 8–240 characters. It will be recorded on every captured release.</p>
+        <div className="reservation-actions"><button type="button" onClick={() => { setBatchReview(null) }}>Keep selected holds</button>
+          <button type="submit" disabled={batchReason.trim().length < 8 || batchReason.trim().length > 240 || saving || Boolean(pending) || ledger?.revision !== batchReview.revision}>Release selected holds</button></div>
+      </form>
+    </FocusDialog>}
     {release && ledger && <FocusDialog title="Release material reservation" onClose={() => { setRelease(null) }}>
       <p>Release all {release.quantity} units of {release.lotId} held for <strong>{release.orderId}</strong>? Units become available to other orders. The reservation and its history remain recorded.</p>
       <form onSubmit={event => { event.preventDefault(); if (reason.trim().length < 8 || reason.trim().length > 240 || pendingRef.current) return

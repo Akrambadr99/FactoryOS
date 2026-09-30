@@ -1,4 +1,4 @@
-import { validateReservationSnapshot, type ReservationCommand, type ReservationSnapshot } from './reservations'
+import { normalizeReservationReleaseBatch, validateReservationSnapshot, type ReservationCommand, type ReservationReleaseBatch, type ReservationSnapshot } from './reservations'
 import { createOrderSyncPreview, type OrderSyncPreview } from './orderSyncPreview'
 
 export class ReservationClientError extends Error {
@@ -9,6 +9,7 @@ export interface ReservationClient {
   read(signal?: AbortSignal): Promise<ReservationSnapshot>
   previewOrders(collection: unknown, signal?: AbortSignal): Promise<{ snapshot: ReservationSnapshot; preview: OrderSyncPreview }>
   execute(command: ReservationCommand, signal?: AbortSignal): Promise<{ snapshot: ReservationSnapshot; replayed: boolean }>
+  releaseBatch(batch: ReservationReleaseBatch, signal?: AbortSignal): Promise<{ snapshot: ReservationSnapshot; replayed: boolean }>
 }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value) }
 function equalJson(actual: unknown, expected: unknown): boolean {
@@ -92,6 +93,26 @@ export function createReservationClient(fetcher: typeof fetch = globalThis.fetch
         const hold = snapshot.reservations.find(hold => hold.id === captured.reservationId.toLowerCase())
         if (hold?.status !== 'released' || hold.releaseReason !== captured.reason.trim() || hold.releasedRevision !== event.sequence) {
           throw new ReservationClientError('invalid_response', 'The service receipt does not confirm this release. Your request has been kept for review.')
+        }
+      }
+      return { snapshot, replayed: value['replayed'] }
+    },
+    async releaseBatch(batch, signal) {
+      let captured: ReservationReleaseBatch
+      try { captured = normalizeReservationReleaseBatch(batch) }
+      catch { throw new ReservationClientError('invalid_batch', 'Review the selected holds, unique request identifiers, revision, and an 8–240 character reason before submitting the release batch.') }
+      const value = await request(captured, signal, '/api/reservations/release-batch')
+      if (!object(value) || Object.keys(value).length !== 2 || typeof value['replayed'] !== 'boolean' || !Object.hasOwn(value, 'snapshot')) {
+        throw new ReservationClientError('invalid_response', 'The batch response could not be verified. Retry the same captured batch; do not assume any release failed to save.')
+      }
+      const snapshot = parse(value['snapshot'])
+      for (const [index, item] of captured.releases.entries()) {
+        const event = snapshot.events.find(event => event.requestId === item.requestId)
+        const hold = snapshot.reservations.find(hold => hold.id === item.reservationId)
+        if (event?.kind !== 'release' || event.sequence !== captured.expectedRevision + index + 1
+          || event.reservationId !== item.reservationId || hold?.status !== 'released'
+          || hold.releaseReason !== captured.reason || hold.releasedRevision !== event.sequence || event.orderId !== hold.orderId) {
+          throw new ReservationClientError('invalid_response', 'The service did not confirm every captured release. Keep this batch and retry it unchanged to verify the outcome.')
         }
       }
       return { snapshot, replayed: value['replayed'] }

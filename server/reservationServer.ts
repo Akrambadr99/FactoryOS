@@ -68,8 +68,9 @@ export async function startReservationServer(options: ReservationServerOptions):
       }
       response.setHeader('Access-Control-Allow-Origin', origin); response.setHeader('Vary', 'Origin')
       const isPreview = request.url === '/api/reservations/order-sync-preview'
-      if (request.url !== '/api/reservations' && !isPreview) throw new HttpError(404, 'not_found', 'This material-service route was not found.')
-      const methods = isPreview ? ['POST'] : ['GET', 'POST']
+      const isReleaseBatch = request.url === '/api/reservations/release-batch'
+      if (request.url !== '/api/reservations' && !isPreview && !isReleaseBatch) throw new HttpError(404, 'not_found', 'This material-service route was not found.')
+      const methods = isPreview || isReleaseBatch ? ['POST'] : ['GET', 'POST']
       if (request.method === 'OPTIONS') {
         const method = request.headers['access-control-request-method']
         const headers = (request.headers['access-control-request-headers'] ?? '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean)
@@ -80,6 +81,10 @@ export async function startReservationServer(options: ReservationServerOptions):
         response.end(); return
       }
       if (request.headers['x-factoryos-client'] !== 'reservations') throw new HttpError(403, 'request_not_allowed', 'The FactoryOS material-service header is missing or invalid.')
+      if (isReleaseBatch) {
+        if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'Material release batches support POST only.')
+        send(response, 200, await store.releaseBatch(await body(request))); return
+      }
       if (isPreview) {
         if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'The order-sync preview supports POST only.')
         const input = await body(request)

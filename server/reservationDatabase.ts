@@ -1,6 +1,6 @@
 import { closeSync, lstatSync, openSync, readSync } from 'node:fs'
 import Database from 'better-sqlite3'
-import { applyReservationCommand, createReservationState, ReservationError, validateReservationState,
+import { applyReservationCommand, applyReservationReleaseBatch, createReservationState, ReservationError, validateReservationState,
   type ReservationState } from '../src/execution/materials/reservations'
 import { ReservationStoreError } from './reservationStore'
 
@@ -188,6 +188,18 @@ export class ReservationDatabase {
     try {
       return this.db.transaction(() => {
         const previous = this.read(), result = applyReservationCommand(previous, command)
+        if (!result.replayed) { capacity(result.state); this.writeState(result.state, previous) }
+        return { snapshot: result.snapshot, replayed: result.replayed }
+      }).immediate()
+    } catch (error) {
+      if (error instanceof ReservationStoreError || error instanceof ReservationError) throw error
+      throw unavailable()
+    }
+  }
+  releaseBatch(value: unknown) {
+    try {
+      return this.db.transaction(() => {
+        const previous = this.read(), result = applyReservationReleaseBatch(previous, value)
         if (!result.replayed) { capacity(result.state); this.writeState(result.state, previous) }
         return { snapshot: result.snapshot, replayed: result.replayed }
       }).immediate()
