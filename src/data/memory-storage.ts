@@ -1,4 +1,4 @@
-import type { StoragePort } from '../workspace/repository';
+import type { StoragePort } from '../platform/storage-port';
 export class MemoryStorage implements StoragePort {
     private readonly values = new Map<string, string>();
     getItem(key: string) { return this.values.get(key) ?? null; }

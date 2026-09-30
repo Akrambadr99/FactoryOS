@@ -1,4 +1,4 @@
-import type { StoragePort } from './repository'
+import type { StoragePort } from '../platform/storage-port'
 
 export interface RecordBinding<C, R> {
   key: string

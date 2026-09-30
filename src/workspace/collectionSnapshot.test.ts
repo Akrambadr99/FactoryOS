@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { compareCollectionSnapshot, createCollectionSnapshot, MAX_SNAPSHOT_CHARACTERS, snapshotSignature, type SnapshotAdapter } from './collectionSnapshot'
 import { array, nonEmptyText, nonNegativeInteger, object, text, uniqueBy } from './storageValidation'
-import type { StoragePort } from './repository'
+import type { StoragePort } from '../platform/storage-port'
 
 interface Item { id: string; value: number }
 interface Collection { items: Item[]; history: string[] }

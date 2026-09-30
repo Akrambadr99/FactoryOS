@@ -65,7 +65,7 @@ describe('validated persistence boundary', () => {
     expect(() => writeStored(storage, 'key', rule, seed())).not.toThrow('private quota detail')
   })
   it('classifies blocked storage reads without leaking native errors', () => {
-    expect(() => readStored({ getItem: () => { throw new Error('private') }, setItem: vi.fn() }, 'key', rule, seed)).toThrow('Browser storage could not be read')
+    expect(() => readStored({ getItem: () => { throw new Error('private') } }, 'key', rule, seed)).toThrow('Browser storage could not be read')
   })
   it('supports domain reference checks without changing accepted values', () => {
     const linked = refine(rule, rows => rows.every(entry => entry.id === 'A'), 'record references are inconsistent')

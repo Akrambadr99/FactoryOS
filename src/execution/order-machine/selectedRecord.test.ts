@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { StoragePort } from '../../workspace/repository'
+import type { StoragePort } from '../../platform/storage-port'
 import { saveCurrentCollection } from '../../workspace/recordStorage'
 import { openSelectedRecord } from './selectedRecord'
 import { readOrderCollection, saveOrderCollection } from './orderCollection'

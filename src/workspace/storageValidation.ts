@@ -1,4 +1,4 @@
-import type { StoragePort } from './repository'
+import type { StoragePort, StorageReader } from '../platform/storage-port'
 
 /** Runtime rules return the original value; validation never strips saved metadata. */
 export type Rule<T> = (value: unknown, path?: string) => T
@@ -90,7 +90,7 @@ export class StoredDataError extends Error {
   }
 }
 const MAX_STORED_CHARACTERS = 20000000
-export function readStored<T>(storage: StoragePort, key: string, rule: Rule<T>, seed: () => T, legacyKey?: string): T {
+export function readStored<T>(storage: StorageReader, key: string, rule: Rule<T>, seed: () => T, legacyKey?: string): T {
   let raw: string | null
   try { raw = storage.getItem(key) }
   catch { throw new StoredDataError(key, 'read', 'Browser storage could not be read. Check storage permissions and retry.') }

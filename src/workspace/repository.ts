@@ -1,11 +1,9 @@
+import type { StoragePort } from '../platform/storage-port';
+export type { StoragePort } from '../platform/storage-port';
 import type { Command, Product, Snapshot } from './types';
 import { execute, fresh } from './engine';
 import { decode } from './validation';
 import { requireThat } from './values';
-export interface StoragePort {
-    getItem: (key: string) => string | null;
-    setItem: (key: string, value: string) => void;
-}
 export class Repository {
     readonly key: string;
     private readonly product: Product;

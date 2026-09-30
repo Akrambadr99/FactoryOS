@@ -1,4 +1,4 @@
-import type { StoragePort } from './repository'
+import type { StorageReader } from '../platform/storage-port'
 import type { Rule } from './storageValidation'
 
 export interface SnapshotRecord { id: string; label: string; value: unknown }
@@ -7,7 +7,7 @@ export interface SnapshotAdapter<T> {
   product: string
   scope: string
   label: string
-  read: (storage: StoragePort) => T
+  read: (storage: StorageReader) => T
   validate: Rule<T>
   groups: (value: T) => readonly SnapshotGroup[]
 }
@@ -56,7 +56,7 @@ function validatePayload<T>(value: unknown, adapter: SnapshotAdapter<T>): T {
   try { return adapter.validate(value) }
   catch { throw new SnapshotError('Snapshot records are invalid for this collection. Check the source file; no saved data was changed.') }
 }
-function currentPayload<T>(adapter: SnapshotAdapter<T>, storage: StoragePort): T {
+function currentPayload<T>(adapter: SnapshotAdapter<T>, storage: StorageReader): T {
   const value = adapter.read(storage)
   // Round-trip like persistence, without writing; absent optional fields stay absent.
   const raw = JSON.stringify(value, (_key, entry: unknown) => {
@@ -73,7 +73,7 @@ function validDate(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
     Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value
 }
-export function createCollectionSnapshot<T>(adapter: SnapshotAdapter<T>, storage: StoragePort, createdAt = new Date().toISOString()): string {
+export function createCollectionSnapshot<T>(adapter: SnapshotAdapter<T>, storage: StorageReader, createdAt = new Date().toISOString()): string {
   if (!validDate(createdAt)) throw new SnapshotError('The snapshot creation time is invalid.')
   const payload = currentPayload(adapter, storage)
   const raw = JSON.stringify({ format: 'collection-snapshot', version: 1, product: adapter.product, scope: adapter.scope, createdAt, payload })
@@ -94,10 +94,10 @@ function records<T>(value: T, adapter: SnapshotAdapter<T>) {
   }
   return result
 }
-export function collectionSignature<T>(adapter: SnapshotAdapter<T>, storage: StoragePort): string {
+export function collectionSignature<T>(adapter: SnapshotAdapter<T>, storage: StorageReader): string {
   return snapshotSignature(currentPayload(adapter, storage))
 }
-export function compareCollectionSnapshot<T>(raw: string, adapter: SnapshotAdapter<T>, storage: StoragePort): SnapshotComparison {
+export function compareCollectionSnapshot<T>(raw: string, adapter: SnapshotAdapter<T>, storage: StorageReader): SnapshotComparison {
   if (!raw.trim()) throw new SnapshotError('Choose a snapshot file or paste Snapshot JSON first.')
   checkSize(raw)
   let parsed: unknown

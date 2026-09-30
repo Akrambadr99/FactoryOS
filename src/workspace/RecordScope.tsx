@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import type { StoragePort } from './repository'
+import type { StoragePort } from '../platform/storage-port'
 import { StoredDataError } from './storageValidation'
 
 const Context = createContext<{ storage: StoragePort; recordId: string; guard: <T extends unknown[]>(action: (...args: T) => void) => (...args: T) => void } | null>(null)

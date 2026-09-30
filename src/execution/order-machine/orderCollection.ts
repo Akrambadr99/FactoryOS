@@ -1,6 +1,6 @@
 import { readStored, writeStored } from '../../workspace/storageValidation'
 import { orderCollectionRule } from './collectionValidation'
-import type { StoragePort } from '../../workspace/repository'
+import type { StoragePort, StorageReader } from '../../platform/storage-port'
 import { initialOrderAggregate, readOrderAggregate, retryRecall } from './orderLedger'
 import type { OrderAggregate, RecallActor } from './orderLedger'
 import { claimRecovery, recoveryEligibility, recoveryWorkInbox } from './recoveryWorkload'
@@ -63,7 +63,7 @@ export function seedOrderCollection(legacy: OrderAggregate = initialOrderAggrega
     { id: 'LOT-91', revision: 1, available: true },
   ], events: [] }
 }
-export function readOrderCollection(storage: StoragePort): OrderCollection {
+export function readOrderCollection(storage: StorageReader): OrderCollection {
   return readStored(storage, collectionKey, orderCollectionRule, () => seedOrderCollection(readOrderAggregate(storage)), 'factoryos:order:PO-8842:v1')
 }
 export function saveOrderCollection(storage: StoragePort, value: OrderCollection): OrderCollection {

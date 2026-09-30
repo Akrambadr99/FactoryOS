@@ -1,4 +1,4 @@
-import type { StoragePort } from '../../workspace/repository'
+import type { StoragePort, StorageReader } from '../../platform/storage-port'
 import { advanceExecution, initialExecution } from './execution'
 import type { Execution, ExecutionAction } from './execution'
 
@@ -23,7 +23,7 @@ export type RecallActor = 'production planner' | 'quality approver'
 export interface RecallPolicy { allowed: boolean; blockers: string[]; queue: 'reconciliation' | 'recovery' | 'complete' }
 const key = 'factoryos:order:PO-8842:v1'
 export const initialOrderAggregate: OrderAggregate = { order: initialExecution, recallOpened: false, recallJob: null, recoveryAssignments: [], causalHistory: [] }
-export function readOrderAggregate(storage: StoragePort): OrderAggregate {
+export function readOrderAggregate(storage: StorageReader): OrderAggregate {
   const raw = storage.getItem(key)
   if (!raw) return initialOrderAggregate
   const value: unknown = JSON.parse(raw)

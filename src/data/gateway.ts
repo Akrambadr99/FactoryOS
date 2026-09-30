@@ -1,5 +1,6 @@
 import type { Command, Product, Snapshot } from '../workspace/types';
-import { Repository, type StoragePort } from '../workspace/repository';
+import { Repository } from '../workspace/repository';
+import type { StoragePort } from '../platform/storage-port';
 export interface WorkspaceGateway {
     read(): Promise<Snapshot>;
     execute(command: Command): Promise<Snapshot>;
