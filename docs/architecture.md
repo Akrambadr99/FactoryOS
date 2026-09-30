@@ -8,7 +8,7 @@ The dependency-free `src/platform/storage-port.ts` owns three structural interfa
 
 For FactoryOS, the collection and legacy readers in `src/execution/order-machine` project orders and lot genealogy. They, validated reads, and snapshot export/comparison accept a getItem-only provider. Saving collections, executing commands, and binding editable records still require the writable port. Selected-record decoders no longer receive artificial throwing writer stubs. Storage keys, persisted shapes, validation, revision checks, and audit history are unchanged.
 
-This is a compile-time capability boundary, not a runtime security sandbox. A browser Storage object remains structurally compatible. Role choices are still local workflow simulations; this pass adds neither authenticated services nor transactional backend persistence. Collection and older single-record workflows retain their existing synchronization limits.
+This is a compile-time capability boundary, not a runtime security sandbox. A browser Storage object remains structurally compatible. Role choices are still local workflow simulations. The earlier storage-port refactor did not add authenticated services or transactional backend persistence; the separate reservation ledger now has the SQLite boundary described below, still without authentication. Collection and older single-record workflows retain their existing synchronization limits.
 
 ## Automated dependency checks
 
@@ -22,12 +22,12 @@ Computed loaders, import.meta.glob, query/hash imports and source symlinks fail 
 
 ## Material reservation boundary
 
-The optional local reservation service owns a separate serialized ledger for stock holds and retry receipts. `src/execution/materials/reservations.ts` defines pure commands, state validation and replay; `reservationClient.ts` validates HTTP responses; `ReservationsPage.tsx` owns draft and navigation state. The Node implementation under `server` owns the filesystem lock, atomic publish and local HTTP boundary. It does not import UI modules.
+The optional local reservation service owns a separate SQLite ledger for stock holds and retry receipts. `src/execution/materials/reservations.ts` defines pure commands, state validation and replay; `reservationClient.ts` validates HTTP responses; `ReservationsPage.tsx` owns draft and navigation state. `server/reservationDatabase.ts` owns the constrained schema and transactions; `sqliteReservationStore.ts` owns directory locking and explicit legacy migration; the HTTP service owns the loopback request boundary. None imports UI modules. The previous JSON adapter remains for migration fixtures and regression verification, and refuses new writes after SQLite publication.
 
-Order references cross this boundary only through explicit validated synchronization. The browser remains authoritative for the older execution workflow, and demo reservation stock is not the genealogy index. No automatic dual write or execution release is performed. See [material reservations](material-reservations.md) for startup, recovery, limits and the planned database migration.
+Order references cross this boundary only through explicit validated synchronization. The browser remains authoritative for the older execution workflow, and demo reservation stock is not the genealogy index. No automatic dual write or execution release is performed. See [material reservations](material-reservations.md) for startup, recovery and limits, and [SQLite migration](sqlite-reservation-migration.md) for the checksum-confirmed legacy transition.
 
 ## Verification and provenance
 
-Type-checked contract tests retain the legacy export and distinguish read/write capabilities. Domain regressions exercise getItem-only collection exports and comparisons, preserved saved data, and safe read failures. Existing unit and Chromium workflows remain regression coverage; no test threshold is weakened. See the portfolio architecture delivery report for current results and commit hashes.
+Type-checked contract tests retain the legacy export and distinguish read/write capabilities. Domain regressions exercise getItem-only collection exports and comparisons, preserved saved data, and safe read failures. Existing unit and Chromium workflows remain regression coverage; no test threshold is weakened. See the [SQLite phase validation report](sqlite-reservations-validation.md) for the latest FactoryOS results; the portfolio architecture delivery report records the earlier refactor.
 
 This refactor, checker and added tests were produced with AI assistance. They do not establish human authorship or licensing eligibility.

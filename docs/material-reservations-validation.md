@@ -1,5 +1,7 @@
 # Material reservations: local delivery evidence
 
+Historical evidence for the first, JSON-backed reservation phase. Its runtime, storage implementation and test totals are preserved below as originally validated; see [SQLite reservation validation](sqlite-reservations-validation.md) for the subsequent phase and current results.
+
 Validated on 2026-09-30 with Node 20.19.5 on Windows, starting from commit `43c0625910fc9b07b0706d096f4dc8bc3ed1c040`. This delivery changes FactoryOS only. It introduces a local, single-process material reservation service and a connected React workspace, not a production deployment.
 
 ## Delivered workflow

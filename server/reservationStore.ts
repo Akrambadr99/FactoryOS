@@ -45,7 +45,11 @@ export class ReservationStore {
       this.directory = await fs.realpath(requested)
       this.lock = await fs.open(path.join(this.directory, '.reservations.lock'), 'wx', 0o600)
       await this.lock.writeFile(this.token, 'utf8'); await this.lock.sync()
-      if ((await fs.readdir(this.directory)).some(name => /^reservations\.[0-9a-f-]+\.pending$/.test(name))) {
+      const files = (await fs.readdir(this.directory)).map(name => name.toLowerCase())
+      if (files.some(name => name === 'reservations.sqlite' || name.startsWith('reservations.sqlite-') || /^reservations\.[0-9a-f-]+\.sqlite\.pending/.test(name))) {
+        throw new ReservationStoreError('migration_conflict', 'A SQLite ledger or migration artifact exists. Legacy JSON writes are disabled; review the database recovery instructions.')
+      }
+      if (files.some(name => /^reservations\.[0-9a-f-]+\.pending$/.test(name))) {
         throw new ReservationStoreError('recovery_required', 'An interrupted material-ledger write needs review. Existing files were kept; follow the local recovery instructions before restarting.')
       }
       try { await fs.lstat(this.stateFile()) }

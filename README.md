@@ -4,16 +4,17 @@ Manufacturing execution and factory operations. A local-first React 19 operation
 
 ## Runtime
 
-- Node 20.19.x
-- npm 10.8.2
-- npm ci
-- npm run check
-- npm run test:e2e
+- Node 24.16+ within the Node 24 LTS line; npm 11.13.0
+- Install with `npm ci --no-audit --no-fund`. Project configuration disables dependency lifecycle hooks; explicit application scripts still run. See the migration runbook before changing native dependencies or runtimes.
+- `npm run check`
+- `npm run test:e2e`
 
 No external service is required. All deterministic fixtures and persistence adapters are local.
 
 ## Material reservations
 
-An optional local Node service supports persistent material holds, shared-stock validation, revision conflict recovery and retry-safe receipts. Open **Reservations** in the product navigation. Inventory is explicitly simulated, and this separate ledger does not automatically release existing browser execution gates.
+An optional local Node service stores material holds, revision conflict state and retry receipts in a transactional SQLite database. Open **Reservations** in the product navigation. Inventory is explicitly simulated, and this separate ledger does not automatically release existing browser execution gates. Existing JSON ledgers require a reviewed preview and explicit checksum-confirmed migration; they are never automatically replaced.
 
 See [the material reservation runbook](docs/material-reservations.md) for startup commands, persistence and recovery limits, workflow behavior and the next backend phases. `npm run check` validates the browser and server; `npm run test:e2e` includes real-service Chromium journeys.
+
+See [the explicit SQLite migration procedure](docs/sqlite-reservation-migration.md) before upgrading an existing ledger, and [the SQLite phase validation report](docs/sqlite-reservations-validation.md) for measured results and remaining limits.

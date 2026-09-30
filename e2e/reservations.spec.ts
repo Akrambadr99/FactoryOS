@@ -10,7 +10,10 @@ const storageKeys = ['factoryos:production-orders:v1', 'factoryos:order:PO-8842:
 interface ServerSnapshot { revision: number; reservations: { id: string; orderId: string; quantity: number; note: string; status: string; releaseReason: string | null }[] }
 let service: Awaited<ReturnType<typeof startReservationService>> | undefined
 test.beforeEach(async () => { service = await startReservationService() })
-test.afterEach(async () => { await service?.close(); service = undefined })
+test.afterEach(async () => {
+  try { await service?.assertSqliteStorage() }
+  finally { await service?.close(); service = undefined }
+})
 
 async function saved(page: Page) {
   return page.evaluate(keys => keys.map(key => [key, localStorage.getItem(key)]), storageKeys)
@@ -55,8 +58,18 @@ async function firstReservation(request: APIRequestContext) {
   return first
 }
 
-test('reservation selection and filters survive reconnect without replacing hidden selection', async ({ page }) => {
+test('reservation selection and filters survive reconnect without replacing hidden selection', async ({ page, request }) => {
   await prepare(page)
+  const serviceRequests: string[] = []
+  page.on('request', current => { if (current.url() === endpoint) serviceRequests.push(current.method()) })
+  const upgradeHelp = page.getByText('Upgrading an existing JSON ledger?', { exact: true })
+  const previewCommand = page.getByText('npm run reservations:migrate -- preview', { exact: true })
+  await expect(previewCommand).not.toBeVisible()
+  await upgradeHelp.focus()
+  await page.keyboard.press('Enter')
+  await expect(previewCommand).toBeVisible()
+  expect(serviceRequests).toEqual([])
+  expect((await backend(request)).revision).toBe(0)
   await connectAndSync(page)
   await page.getByRole('button', { name: 'Select order PO-9901', exact: true }).click()
   await page.getByLabel('Find order', { exact: true }).fill('PO-8842')

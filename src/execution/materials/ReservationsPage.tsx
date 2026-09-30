@@ -143,6 +143,11 @@ export function ReservationsPage({ client: suppliedClient }: { client?: Reservat
       <div className="reservation-actions"><button type="button" disabled={loading || saving} onClick={() => { void refresh() }}>{ledger ? 'Refresh reservations' : 'Connect reservation service'}</button>
         {ledger && <button type="button" disabled={saving || Boolean(pending)} onClick={syncOrders}>Sync saved orders</button>}</div>
     </section>
+    {!ledger && <details className="reservation-upgrade-help"><summary>Upgrading an existing JSON ledger?</summary>
+      <p>The service will not replace it automatically. Stop the service, then run this read-only preview from the repository:</p>
+      <code>npm run reservations:migrate -- preview</code>
+      <p>Review the counts and source checksum. Apply requires that exact checksum; the original JSON remains preserved. Use the same data directory for preview, apply and the service. Run the migration command with --help for its syntax.</p>
+    </details>}
     <p className="reservation-announcement" role="status" aria-live="polite" tabIndex={-1} ref={feedback}>{saving ? 'Saving the captured request… Your newer draft edits will be kept.' : loading ? 'Loading reservation ledger…' : notice}</p>
     {error && <p className="reservation-error" role="alert">{error}</p>}
     {pending && <section className="reservation-pending" aria-label="Pending reservation request"><h2>{saving ? 'Request in progress' : 'Request not confirmed'}</h2><p>{pending.summary}</p>

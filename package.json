@@ -4,15 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "engines": {
-    "node": ">=20.19 <21"
+    "node": ">=24.16 <25"
   },
-  "packageManager": "npm@10.8.2",
+  "packageManager": "npm@11.13.0",
   "scripts": {
     "check": "npm run test:architecture && npm run architecture && npm run lint && npm run test && npm run test:server && npm run build && npm run build:server",
     "build:server": "npm run typecheck:server && vite build --config vite.server.config.ts",
     "typecheck:server": "tsc -p tsconfig.server.json",
-    "test:server": "vitest run --config vitest.server.config.ts",
+    "test:server": "npm run build:server && vitest run --config vitest.server.config.ts",
     "start:server": "node dist-server/index.js",
+    "reservations:migrate": "node dist-server/reservationMigrationCli.js",
     "architecture": "node scripts/check-architecture.mjs",
     "test:architecture": "node --test scripts/architecture.node.mjs",
     "dev": "vite",
@@ -27,6 +28,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
+    "better-sqlite3": "13.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"
@@ -37,7 +39,8 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.4",
-    "@types/node": "^20.19.43",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "^24.0.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",

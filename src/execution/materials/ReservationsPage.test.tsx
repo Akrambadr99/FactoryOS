@@ -60,6 +60,18 @@ async function reject<T>(pending: ReturnType<typeof deferred<T>>) {
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('material reservation workbench interaction', () => {
+  it('reveals storage upgrade guidance without connecting or changing saved records', async () => {
+    const { user, read, execute } = setup()
+    const write = vi.spyOn(Storage.prototype, 'setItem')
+    const guidance = screen.getByText('Upgrading an existing JSON ledger?')
+    expect(guidance.closest('details')).not.toHaveAttribute('open')
+    await user.click(guidance)
+    expect(guidance.closest('details')).toHaveAttribute('open')
+    expect(screen.getByText('npm run reservations:migrate -- preview')).toBeVisible()
+    expect(screen.getByText(/Apply requires that exact checksum/)).toBeVisible()
+    expect(read).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled()
+  })
+
   it('contacts the optional service only after explicit connection and never writes browser execution data', async () => {
     const { user, read, execute } = setup()
     const write = vi.spyOn(Storage.prototype, 'setItem')

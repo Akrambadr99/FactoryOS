@@ -29,7 +29,7 @@ afterEach(async () => {
 })
 async function launch(directory?: string) {
   const resolved = directory ?? await temporary()
-  const service = await startReservationServer({ directory: resolved, port: 0 })
+  const service = await startReservationServer({ directory: resolved, port: 0, storage: 'json' })
   services.push(service); return { service, directory: resolved }
 }
 interface Response { status: number; text: string; headers: Record<string, string | string[] | undefined> }
@@ -164,7 +164,7 @@ describe('durable local material reservations', () => {
 
   it('holds an exclusive process lock and releases it on orderly shutdown', async () => {
     const { service, directory } = await launch()
-    await expect(startReservationServer({ directory, port: 0 })).rejects.toThrow('Another process owns')
+    await expect(startReservationServer({ directory, port: 0, storage: 'json' })).rejects.toThrow('Another process owns')
     await service.close()
     await expect(fs.stat(path.join(directory, '.reservations.lock'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await call((await launch(directory)).service)).status).toBe(200)
@@ -226,7 +226,7 @@ describe('durable local material reservations', () => {
     expect((await call(service)).status).toBe(503)
     expect((await post(service, sync())).status).toBe(503)
     await service.close()
-    await expect(startReservationServer({ directory, port: 0 })).rejects.toThrow('could not be verified')
+    await expect(startReservationServer({ directory, port: 0, storage: 'json' })).rejects.toThrow('could not be verified')
     expect(await fs.readFile(file, 'utf8')).toBe('{corrupt')
     await expect(fs.stat(path.join(directory, '.reservations.lock'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -240,7 +240,7 @@ describe('durable local material reservations', () => {
     await service.close()
     const pending = path.join(directory, 'reservations.' + randomUUID() + '.pending')
     await fs.writeFile(pending, 'interrupted candidate', 'utf8')
-    await expect(startReservationServer({ directory, port: 0 })).rejects.toThrow('interrupted')
+    await expect(startReservationServer({ directory, port: 0, storage: 'json' })).rejects.toThrow('interrupted')
     expect(await fs.readFile(pending, 'utf8')).toBe('interrupted candidate')
   })
 

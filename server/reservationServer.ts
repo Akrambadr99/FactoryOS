@@ -1,9 +1,10 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ReservationStore, ReservationStoreError } from './reservationStore'
+import { SQLiteReservationStore } from './sqliteReservationStore'
 import { ReservationError } from '../src/execution/materials/reservations'
 
-export interface ReservationServerOptions { directory: string; port?: number; frontendPort?: number }
+export interface ReservationServerOptions { directory: string; port?: number; frontendPort?: number; storage?: 'sqlite' | 'json' }
 export interface ReservationServer { origin: string; port: number; close: () => Promise<void> }
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 class HttpError extends Error {
@@ -54,7 +55,8 @@ export async function startReservationServer(options: ReservationServerOptions):
     throw new Error('Invalid local service port.')
   }
   const origins = new Set([`http://127.0.0.1:${String(frontendPort)}`, `http://localhost:${String(frontendPort)}`])
-  const store = new ReservationStore(options.directory)
+  if (options.storage !== undefined && !['sqlite', 'json'].includes(options.storage)) throw new Error('Invalid reservation storage engine.')
+  const store = options.storage === 'json' ? new ReservationStore(options.directory) : new SQLiteReservationStore(options.directory)
   await store.open()
   let boundPort = 0
   async function handle(request: IncomingMessage, response: ServerResponse) {

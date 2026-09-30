@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, open, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
@@ -21,6 +21,19 @@ export async function startReservationService() {
   child.stdout.on('data', retain)
   child.stderr.on('data', retain)
   let closed = false
+  async function assertSqliteStorage() {
+    const database = await open(path.join(directory, 'reservations.sqlite'), 'r')
+    try {
+      const header = Buffer.alloc(16)
+      const { bytesRead } = await database.read(header, 0, header.length, 0)
+      if (bytesRead !== 16 || header.toString('ascii') !== 'SQLite format 3\u0000') {
+        throw new Error('The browser fixture did not create a real SQLite reservation ledger.')
+      }
+    } finally { await database.close() }
+    if ((await readdir(directory)).includes('reservations.json')) {
+      throw new Error('The browser fixture unexpectedly created a legacy JSON ledger.')
+    }
+  }
   async function close() {
     if (closed) return
     closed = true
@@ -49,7 +62,7 @@ export async function startReservationService() {
           headers: { Origin: 'http://127.0.0.1:4304', 'X-FactoryOS-Client': 'reservations' },
           signal: AbortSignal.timeout(1000),
         })
-        if (response.ok) return { directory, close }
+        if (response.ok) return { directory, close, assertSqliteStorage }
       } catch { /* The owned process may not yet have opened its listener. */ }
       await pause(50)
     }
