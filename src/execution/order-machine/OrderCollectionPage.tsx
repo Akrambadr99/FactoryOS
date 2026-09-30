@@ -1,3 +1,7 @@
+import { useCollectionExplorer } from '../../workspace/useCollectionExplorer'
+import { ExplorerControls, ExplorerPagination, ExplorerSelection } from '../../workspace/CollectionExplorerControls'
+import { withCollectionView } from '../../workspace/collectionExplorer'
+import { orderTriage } from './collectionTriage'
 import { recordDetailPath, recordDecisionPath } from './recordLinks'
 import { Link } from 'react-router-dom'
 import { saveCurrentCollection } from '../../workspace/recordStorage'
@@ -6,20 +10,19 @@ import { useSearchParams } from 'react-router-dom'
 import { recoveryOperators } from './recoveryWorkload'
 import { archiveOrder, bulkRetryOrders, claimOrderRecovery, createOrder, getOrder,
   orderCollectionSummary, orderRecoveryInbox, readOrderCollection, retryOrderRecovery,
-  saveOrderCollection, setLotIndexAvailability, visibleOrders } from './orderCollection'
+  saveOrderCollection, setLotIndexAvailability } from './orderCollection'
 
 export function OrderCollectionPage() {
   const [collection, setCollection] = useState(() => readOrderCollection(window.localStorage))
   const [params, setParams] = useSearchParams()
-  const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('active')
+  const explorer = useCollectionExplorer(collection.orders, orderTriage)
   const [operatorId, setOperatorId] = useState('planner-ada')
   const [checked, setChecked] = useState<string[]>([])
   const [newId, setNewId] = useState('')
   const [notice, setNotice] = useState('')
   const selectedId = params.get('order') ?? 'PO-8843'
   const selected = collection.orders.find(item => item.id === selectedId)
-  const rows = visibleOrders(collection, query, filter)
+  const rows = explorer.rows
   const inbox = orderRecoveryInbox(collection)
   const summary = orderCollectionSummary(collection)
   function persist(next: typeof collection, message: string) { try {
@@ -43,6 +46,7 @@ export function OrderCollectionPage() {
     </section>
     <section className="suite-card" aria-label="Recovery queue">
       <h2>Recovery queue</h2>
+      <p>All active recovery assignments. Collection filters below do not limit this queue.</p>
       {inbox.length ? <ul>{inbox.map(item => <li key={item.orderId + item.jobId}>
         <button onClick={() => { choose(item.orderId) }}>{item.orderId}</button> · {item.jobId} ·
         {item.assigneeId ?? 'team queue'} · {item.actionable ? 'actionable' : 'blocked'}
@@ -50,26 +54,27 @@ export function OrderCollectionPage() {
       <label>Recovery operator <select value={operatorId} onChange={event => { setOperatorId(event.target.value) }}>
         {recoveryOperators.map(item => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}
       </select></label>
+
+    </section>
+    <section className="suite-card" aria-label="Order collection">
+      <h2>Production orders</h2>
+      <ExplorerControls noun="orders" view={explorer.view} onChange={explorer.setView} states={orderTriage.states} onReset={explorer.reset} />
+      <ExplorerSelection selected={checked} visible={explorer.rows.map(record => record.id)} onChange={setChecked} />
       <button onClick={() => {
         const role = recoveryOperators.find(item => item.id === operatorId)?.role ?? 'production planner'
         const result = bulkRetryOrders(collection, checked, role, operatorId)
         persist(result.collection, `${String(result.updated.length)} retried; ${String(result.skipped.length)} skipped; ${String(result.blocked.length)} blocked.`)
       }} disabled={!checked.length}>Retry selected recoveries</button>
-    </section>
-    <section className="suite-card" aria-label="Order collection">
-      <h2>Production orders</h2>
-      <div className="filters"><label>Search orders <input value={query} onChange={event => { setQuery(event.target.value) }} /></label>
-        <label>Show <select value={filter} onChange={event => { setFilter(event.target.value) }}>
-          <option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option>
-        </select></label></div>
       {rows.length ? <ul>{rows.map(record => <li key={record.id}>
         <label><input type="checkbox" checked={checked.includes(record.id)} onChange={event => {
           setChecked(current => event.target.checked ? [...current, record.id] : current.filter(id => id !== record.id))
         }} /> Select {record.id}</label>
         <button aria-current={selectedId === record.id ? 'true' : undefined} onClick={() => { choose(record.id) }}>
           {record.id} · {record.line} · {record.aggregate.recallJob?.status ?? record.aggregate.order.phase}
-        </button><small> r{record.aggregate.order.revision} · {record.lotIndexId}{record.archived ? ' · archived' : ''}</small>
-      </li>)}</ul> : <p>No orders match this view.</p>}
+        </button><small> r{record.aggregate.order.revision} · {record.lotIndexId}{record.archived ? ' · archived' : ''} · {orderTriage.states.find(state => state.value === orderTriage.state(record))?.label}</small>
+      </li>)}</ul> : <div className="collection-empty"><p>No orders match this view. Adjust the filters or reset the view; your selected record is preserved.</p><button onClick={explorer.reset}>Reset empty view</button></div>}
+      <ExplorerPagination page={explorer.page} pageCount={explorer.pageCount} matchingCount={explorer.matchingCount} onPageChange={page => { explorer.setView({ page }) }} />
+      {selected && !explorer.rows.some(record => record.id === selected.id) && <p className="collection-context">Selected {selected.id} is outside the current page or filters. Its details remain open.</p>}
       <form onSubmit={event => { event.preventDefault(); if (run(() => createOrder(collection, newId, 'assembly', 'LOT-55'), 'Order created.')) setNewId('') }}>
         <label>New production order ID <input value={newId} onChange={event => { setNewId(event.target.value) }} pattern="PO-[0-9]{4,}" required /></label>
         <button type="submit">Create assembly order</button>
@@ -102,7 +107,7 @@ export function OrderCollectionPage() {
       <ol>{collection.events.toReversed().slice(0, 8).map(item => <li key={item.sequence}>
         {item.action} · {item.targetId} · related {item.relatedIds.join(', ') || 'none'} · {item.actor}
       </li>)}</ol></section>
-    <nav aria-label="Selected record workflows">{selected && !selected.archived && <><Link to={recordDetailPath(selected)}>Open record details</Link>{' · '}<Link to={recordDecisionPath(selected)}>Open decision workflow</Link></>} <button onClick={() => { try { setCollection(readOrderCollection(window.localStorage)); setNotice('Workspace refreshed; selection preserved.') } catch (error) { setNotice(error instanceof Error ? error.message : 'Refresh failed.') } }}>Refresh workspace</button></nav>
+    <nav aria-label="Selected record workflows">{selected && !selected.archived && <><Link to={withCollectionView(recordDetailPath(selected), params)}>Open record details</Link>{' · '}<Link to={withCollectionView(recordDecisionPath(selected), params)}>Open decision workflow</Link></>} <button onClick={() => { try { setCollection(readOrderCollection(window.localStorage)); setNotice('Workspace refreshed; selection preserved.') } catch (error) { setNotice(error instanceof Error ? error.message : 'Refresh failed.') } }}>Refresh workspace</button></nav>
     <p role="status">{notice}</p>
   </main>
 }

@@ -1,0 +1,15 @@
+.collection-explorer { display: flex; flex-wrap: wrap; align-items: end; gap: .8rem 1.1rem; margin-block: 1rem; }
+.collection-explorer > label { display: grid; gap: .35rem; flex: 1 1 9rem; min-width: 0; }
+.collection-explorer > label:first-child { flex-basis: 15rem; }
+.collection-explorer input, .collection-explorer select { width: 100%; max-width: 100%; min-width: 0; }
+.collection-explorer details { align-self: center; }
+.collection-explorer details label { display: grid; gap: .35rem; margin-block-start: .5rem; }
+.collection-explorer summary { cursor: pointer; padding: .6rem .2rem; }
+.collection-pagination, .collection-selection { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-block: 1rem; }
+.collection-pagination p { margin-inline-end: auto; }
+.collection-selection p { flex-basis: 100%; margin-block: .25rem; }
+@media (max-width: 560px) {
+  .collection-explorer > label { flex-basis: calc(50% - 1rem); }
+  .collection-explorer > label:first-child { flex-basis: 100%; }
+  .collection-selection button, .collection-pagination button { flex: 1 1 auto; }
+}
