@@ -8,7 +8,11 @@
   },
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "check": "npm run test:architecture && npm run architecture && npm run lint && npm run test && npm run build",
+    "check": "npm run test:architecture && npm run architecture && npm run lint && npm run test && npm run test:server && npm run build && npm run build:server",
+    "build:server": "npm run typecheck:server && vite build --config vite.server.config.ts",
+    "typecheck:server": "tsc -p tsconfig.server.json",
+    "test:server": "vitest run --config vitest.server.config.ts",
+    "start:server": "node dist-server/index.js",
     "architecture": "node scripts/check-architecture.mjs",
     "test:architecture": "node --test scripts/architecture.node.mjs",
     "dev": "vite",
@@ -16,7 +20,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build:server && playwright test",
     "test:watch": "vitest",
     "typecheck": "tsc -b",
     "preview": "vite preview"

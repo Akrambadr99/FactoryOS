@@ -20,6 +20,12 @@ Non-JSX source modules cannot depend on React or UI integration. Seven existing 
 
 Computed loaders, import.meta.glob, query/hash imports and source symlinks fail closed. This is a conservative first-party import-graph check, not general JavaScript execution analysis, security certification, or a scan of dependency internals.
 
+## Material reservation boundary
+
+The optional local reservation service owns a separate serialized ledger for stock holds and retry receipts. `src/execution/materials/reservations.ts` defines pure commands, state validation and replay; `reservationClient.ts` validates HTTP responses; `ReservationsPage.tsx` owns draft and navigation state. The Node implementation under `server` owns the filesystem lock, atomic publish and local HTTP boundary. It does not import UI modules.
+
+Order references cross this boundary only through explicit validated synchronization. The browser remains authoritative for the older execution workflow, and demo reservation stock is not the genealogy index. No automatic dual write or execution release is performed. See [material reservations](material-reservations.md) for startup, recovery, limits and the planned database migration.
+
 ## Verification and provenance
 
 Type-checked contract tests retain the legacy export and distinguish read/write capabilities. Domain regressions exercise getItem-only collection exports and comparisons, preserved saved data, and safe read failures. Existing unit and Chromium workflows remain regression coverage; no test threshold is weakened. See the portfolio architecture delivery report for current results and commit hashes.

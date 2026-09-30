@@ -7,7 +7,7 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['coverage', 'dist', 'playwright-report', 'test-results'],
+    ignores: ['coverage', 'dist', 'dist-server', '.factoryos-data', 'playwright-report', 'test-results'],
   },
   {
     files: ['**/*.{js,mjs,cjs}'],

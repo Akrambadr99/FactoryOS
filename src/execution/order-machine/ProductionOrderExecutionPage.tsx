@@ -2,6 +2,7 @@ import { readOrderCollection } from './orderCollection'
 import { SelectedRecordRoute } from './SelectedRecordRoute'
 import { useRecordContext } from '../../workspace/RecordScope'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { executionFinding } from './execution'
 import type { ExecutionAction } from './execution'
 import { executeOrder, readOrderAggregate, reopenOrder, saveOrderAggregate } from './orderLedger'
@@ -33,6 +34,7 @@ function RecordContent() {
     </div></header>
     <section className="suite-card" aria-label="Execution evidence">
       <h2>Material and machine gates</h2>
+      <p><Link to={'/execution/reservations?order=' + encodeURIComponent(order.id)}>Review material reservations</Link> · Separate local pilot; reservations do not automatically release this execution gate.</p>
       <p>Lot {selectedOrder?.lotIndexId ?? 'unavailable'}: {order.materialReleased ? 'Released' : 'Material hold'}</p>
       <p>Machine M-17: {order.machineAvailable ? 'Available' : 'Downtime incident'}</p>
       <button disabled={order.materialReleased || order.phase === 'complete'} onClick={guard(() => { act({ type: 'release-material' }); })}>Release material lot</button>
