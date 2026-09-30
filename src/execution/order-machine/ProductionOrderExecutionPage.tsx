@@ -1,23 +1,28 @@
+import { readOrderCollection } from './orderCollection'
+import { SelectedRecordRoute } from './SelectedRecordRoute'
+import { useRecordContext } from '../../workspace/RecordScope'
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
 import { executionFinding } from './execution'
 import type { ExecutionAction } from './execution'
 import { executeOrder, readOrderAggregate, reopenOrder, saveOrderAggregate } from './orderLedger'
 
-export function ProductionOrderExecutionPage() {
-  const { orderId } = useParams()
-  const [aggregate, setAggregate] = useState(() => readOrderAggregate(window.localStorage))
+function RecordContent() {
+  const { storage, guard, recordId } = useRecordContext()
+
+  const orderId = recordId
+  const selectedOrder = readOrderCollection(storage).orders.find(item => item.id === recordId)
+  const [aggregate, setAggregate] = useState(() => readOrderAggregate(storage))
   const order = aggregate.order
   const [quantity, setQuantity] = useState(120)
   const [notice, setNotice] = useState('')
   function act(action: ExecutionAction) {
     const finding = executionFinding(order, action)
     if (finding) { setNotice(finding); return }
-    setAggregate(saveOrderAggregate(window.localStorage, executeOrder(aggregate, action)))
+    setAggregate(saveOrderAggregate(storage, executeOrder(aggregate, action)))
     setNotice(`${action.type} recorded at revision ${String(order.revision + 1)}.`)
   }
   function reopen() {
-    try { setAggregate(saveOrderAggregate(window.localStorage, reopenOrder(aggregate))); setNotice('Order reopened for quality review.') }
+    try { setAggregate(saveOrderAggregate(storage, reopenOrder(aggregate))); setNotice('Order reopened for quality review.') }
     catch (error) { setNotice(error instanceof Error ? error.message : 'Reopening failed.') }
   }
   if (orderId && orderId !== order.id) return <main className="suite-page"><p role="alert">Order {orderId} was not found.</p></main>
@@ -28,29 +33,29 @@ export function ProductionOrderExecutionPage() {
     </div></header>
     <section className="suite-card" aria-label="Execution evidence">
       <h2>Material and machine gates</h2>
-      <p>Lot LOT-55: {order.materialReleased ? 'Released' : 'Material hold'}</p>
+      <p>Lot {selectedOrder?.lotIndexId ?? 'unavailable'}: {order.materialReleased ? 'Released' : 'Material hold'}</p>
       <p>Machine M-17: {order.machineAvailable ? 'Available' : 'Downtime incident'}</p>
-      <button disabled={order.materialReleased || order.phase === 'complete'} onClick={() => { act({ type: 'release-material' }); }}>Release material lot</button>
-      <button disabled={order.machineAvailable || order.phase === 'complete'} onClick={() => { act({ type: 'restore-machine' }); }}>Restore machine</button>
+      <button disabled={order.materialReleased || order.phase === 'complete'} onClick={guard(() => { act({ type: 'release-material' }); })}>Release material lot</button>
+      <button disabled={order.machineAvailable || order.phase === 'complete'} onClick={guard(() => { act({ type: 'restore-machine' }); })}>Restore machine</button>
     </section>
     <section className="suite-card" aria-label="Order execution">
       <h2>Production</h2><p>Phase: {order.phase}</p>
-      <button disabled={Boolean(executionFinding(order, { type: 'start' }))} onClick={() => { act({ type: 'start' }); }}>Start order</button>
+      <button disabled={Boolean(executionFinding(order, { type: 'start' }))} onClick={guard(() => { act({ type: 'start' }); })}>Start order</button>
       <label className="suite-field"><span className="suite-field-label">Completed units</span>
         <input type="number" min="1" max={order.target - order.produced} value={quantity}
           onChange={event => { setQuantity(Number(event.target.value)); }} />
       </label>
-      <button disabled={order.phase !== 'running'} onClick={() => { act({ type: 'produce', quantity }); }}>Record output</button>
+      <button disabled={order.phase !== 'running'} onClick={guard(() => { act({ type: 'produce', quantity }); })}>Record output</button>
       <p>Target: {order.target} · Recorded: {order.produced}</p>
     </section>
     <section className="suite-card" aria-label="Quality release">
       <h2>Independent quality decision</h2>
       <p>{order.qualityApproved ? 'Quality approval recorded' : 'Quality approval pending'}</p>
       <button disabled={order.phase !== 'quality-hold' || order.qualityApproved}
-        onClick={() => { act({ type: 'approve-quality' }); }}>Approve quality</button>
+        onClick={guard(() => { act({ type: 'approve-quality' }); })}>Approve quality</button>
       <button disabled={Boolean(executionFinding(order, { type: 'complete' }))}
-        onClick={() => { act({ type: 'complete' }); }}>Complete order</button>
-      {order.phase === 'complete' && <button onClick={reopen}>Reopen completed order</button>}
+        onClick={guard(() => { act({ type: 'complete' }); })}>Complete order</button>
+      {order.phase === 'complete' && <button onClick={guard(reopen)}>Reopen completed order</button>}
       <p>Recall scope: {aggregate.recallOpened ? 'open' : 'not opened'}</p>
       <p role="status">{notice || 'Complete each gate in sequence.'}</p>
       <details><summary>Execution history</summary>
@@ -59,3 +64,5 @@ export function ProductionOrderExecutionPage() {
     </section>
   </div>
 }
+
+export function ProductionOrderExecutionPage() { return <SelectedRecordRoute><RecordContent /></SelectedRecordRoute> }

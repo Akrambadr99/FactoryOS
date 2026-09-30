@@ -1,3 +1,6 @@
+import { recordDetailPath, recordDecisionPath } from './recordLinks'
+import { Link } from 'react-router-dom'
+import { saveCurrentCollection } from '../../workspace/recordStorage'
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { recoveryOperators } from './recoveryWorkload'
@@ -19,14 +22,14 @@ export function OrderCollectionPage() {
   const rows = visibleOrders(collection, query, filter)
   const inbox = orderRecoveryInbox(collection)
   const summary = orderCollectionSummary(collection)
-  function persist(next: typeof collection, message: string) {
-    setCollection(saveOrderCollection(window.localStorage, next))
-    setNotice(message)
-  }
+  function persist(next: typeof collection, message: string) { try {
+    setCollection(saveCurrentCollection(window.localStorage, collection, next, readOrderCollection, saveOrderCollection))
+    setNotice(message); return true
+  } catch (error) { setNotice(error instanceof Error ? error.message : 'Save failed. Your input is preserved.'); return false } }
   function choose(id: string) { setParams(current => { const next = new URLSearchParams(current); next.set('order', id); return next }) }
   function run(action: () => typeof collection, success: string) {
-    try { persist(action(), success) }
-    catch (error) { setNotice(error instanceof Error ? error.message : 'Order operation failed.') }
+    try { return persist(action(), success) }
+    catch (error) { setNotice(error instanceof Error ? error.message : 'Order operation failed.'); return false }
   }
   return <main className="suite-page">
     <header className="suite-title"><div><small>PRODUCTION / GENEALOGY RECOVERY</small>
@@ -67,7 +70,7 @@ export function OrderCollectionPage() {
           {record.id} · {record.line} · {record.aggregate.recallJob?.status ?? record.aggregate.order.phase}
         </button><small> r{record.aggregate.order.revision} · {record.lotIndexId}{record.archived ? ' · archived' : ''}</small>
       </li>)}</ul> : <p>No orders match this view.</p>}
-      <form onSubmit={event => { event.preventDefault(); run(() => createOrder(collection, newId, 'assembly', 'LOT-55'), 'Order created.'); setNewId('') }}>
+      <form onSubmit={event => { event.preventDefault(); if (run(() => createOrder(collection, newId, 'assembly', 'LOT-55'), 'Order created.')) setNewId('') }}>
         <label>New production order ID <input value={newId} onChange={event => { setNewId(event.target.value) }} pattern="PO-[0-9]{4,}" required /></label>
         <button type="submit">Create assembly order</button>
       </form>
@@ -99,6 +102,7 @@ export function OrderCollectionPage() {
       <ol>{collection.events.toReversed().slice(0, 8).map(item => <li key={item.sequence}>
         {item.action} · {item.targetId} · related {item.relatedIds.join(', ') || 'none'} · {item.actor}
       </li>)}</ol></section>
+    <nav aria-label="Selected record workflows">{selected && !selected.archived && <><Link to={recordDetailPath(selected)}>Open record details</Link>{' · '}<Link to={recordDecisionPath(selected)}>Open decision workflow</Link></>} <button onClick={() => { try { setCollection(readOrderCollection(window.localStorage)); setNotice('Workspace refreshed; selection preserved.') } catch (error) { setNotice(error instanceof Error ? error.message : 'Refresh failed.') } }}>Refresh workspace</button></nav>
     <p role="status">{notice}</p>
   </main>
 }
