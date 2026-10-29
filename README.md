@@ -1,3 +1,58 @@
+<p align="center">
+  <img src="docs/media/project-banner.svg" alt="FactoryOS — Manufacturing execution and factory operations" width="100%">
+</p>
+
+<p align="center"><strong>Manufacturing execution and factory operations</strong></p>
+
+<p align="center"><a href="#overview">Overview</a> · <a href="#explore">Explore</a> · <a href="#getting-started">Getting started</a></p>
+
+<p align="center"><code>React</code> · <code>TypeScript</code> · <code>Vite</code></p>
+
+## Overview
+
+**FactoryOS** is a React and TypeScript application for manufacturing execution and factory operations. Explore its records, workflows, and operational views from the local workspace.
+
+This project belongs to a related operations-application portfolio and shares foundation code and conventions with sibling repositories.
+
+![FactoryOS: actual local application overview with fixture data](docs/media/overview.png)
+
+*Actual application capture using local fixture data.*
+
+## Explore
+
+- Production order release
+- BOM effective revisions
+- Routing execution
+- Machine downtime recovery
+- Material availability
+- Scrap disposition
+- Rework release
+- Shift handoff timing
+
+## Getting started
+
+Use the project-specific instructions below. They include service configuration and persistence requirements; the frontend alone is not a substitute for those steps.
+
+### Development commands
+
+| Command | Script defined by this project |
+| --- | --- |
+| `npm run dev` | `vite` |
+| `npm run typecheck` | `tsc -b` |
+| `npm run lint` | `eslint . --max-warnings 0` |
+| `npm run test` | `vitest run` |
+| `npm run test:e2e` | `npm run build:server && playwright test` |
+| `npm run build` | `npm run typecheck && vite build && node scripts/check-entry-budget.mjs` |
+
+See the project guide below for browser installation and any service-specific setup.
+
+## Project notes
+
+The preview uses local fixture data. Workflow and role controls demonstrate application behavior; this page does not imply a certified, hosted, or production-integrated service.
+
+<details>
+<summary><strong>Project guide, technical details, and existing documentation</strong></summary>
+
 # FactoryOS
 
 Manufacturing execution and factory operations. A local-first React 19 operations platform with typed records, versioned commands, role-separated workflow transitions, cross-record validation, retry-safe receipts, immutable audit evidence, analytics, and direct Chromium journeys.
@@ -22,3 +77,9 @@ See [the explicit SQLite migration procedure](docs/sqlite-reservation-migration.
 Order synchronization has a [read-only change review](docs/order-sync-review.md), removal acknowledgment and stale-source protection before explicit confirmation. This does not move browser order ownership to the service.
 
 [Selected hold release](docs/selected-hold-release.md) lets planners review and release up to 25 explicitly chosen holds in one transaction, with a shared reason, preserved selection and exact retries. It never releases sync blockers automatically. See [the batch release validation report](docs/selected-hold-release-validation.md) for current checks and visual evidence; the [order review report](docs/order-sync-review-validation.md) retains the previous phase's results.
+
+</details>
+
+---
+
+<p align="center"><a href="https://github.com/Akrambadr99?tab=repositories">Explore the portfolio</a></p>
