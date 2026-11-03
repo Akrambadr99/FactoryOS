@@ -18,6 +18,26 @@ This project belongs to a related operations-application portfolio and shares fo
 
 *Actual application capture using local fixture data.*
 
+## AI code review and regression testing
+
+I have used FactoryOS to evaluate AI-generated fixes and design debugging benchmarks across TypeScript workflows and a local Node.js/SQLite reservation service. The strongest cases require reasoning about concurrent commands, transactional writes, retries, and retained evidence.
+
+- **Atomicity and conflict handling:** implemented revision-checked batch release and designed HTTP tests for competing updates and failures while recording receipts, so rejected commands cannot leave partial reservation or audit changes. [Batch-release tests](server/releaseBatchHttp.test.ts)
+- **Recovery and migration checks:** tested replay after restart, checksum-confirmed migration, preservation of the original source, and refusal to overwrite existing state. [SQLite persistence tests](server/sqliteReservationStore.test.ts)
+- **Evaluating candidate changes:** use these contracts to inspect whether a bug fix also preserves retry safety and existing workflow boundaries, and whether its tests exercise the failure rather than only the successful path.
+
+The public tests provide reproducible review cases and support debugging-task design. The reservation service is local, inventory is simulated, and the service does not automatically control the browser application's execution gates.
+
+Use the documented Node 24 runtime and installation steps below, then run the existing checks:
+
+```sh
+npm run check
+npm run test:server
+npm run test:e2e
+```
+
+`check` already includes server tests and builds. `test:server` is useful when reviewing a service change; `test:e2e` covers the browser and real local service journeys.
+
 ## Explore
 
 - Production order release
